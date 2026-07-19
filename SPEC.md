@@ -84,6 +84,18 @@ Sources, composable, all proposal-only through the standard changeset flow:
 
 Crossref disagreements with existing metadata (wrong year, mangled authors) are flagged in the audit report only — never auto-fixed.
 
+## Skills (shipped with the repo)
+
+The repo is public and Claude Code is the intended driver, so the workflows ship as project skills in `.claude/skills/`, written for any user, not just the author:
+
+| Skill              | Purpose                                                                                                                          |
+|--------------------|--------------------------------------------------------------------------------------------------------------------------------------|
+| `zelador-setup`    | First-run onboarding: walk the user through creating a Zotero API key, finding their user ID, writing `.env` (without the agent reading it), verifying the connection, and recommending the auto-tagging setting be disabled |
+| `zelador-taxonomy` | Design or revise `taxonomy.yaml` interactively from real audit data — cluster existing tags, propose canonical vocabulary + aliases, record decisions |
+| `zelador-review`   | The recurring session: backup → audit → interpret findings → propose changesets → validate → in-chat approval → dry-run → apply → log |
+
+Skills encode the safety flow so it is followed by construction, not memory.
+
 ## Milestones
 
 | #   | Milestone                                                                                                     |
