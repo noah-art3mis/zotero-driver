@@ -12,6 +12,7 @@ class Library:
     items: list = field(default_factory=list)
     collections: list = field(default_factory=list)
     tags: list = field(default_factory=list)
+    tag_colors: list = field(default_factory=list)  # live tagColors setting value
 
     def regular_items(self) -> list:
         """Items that belong in a bibliography — no notes, annotations, or attachments."""

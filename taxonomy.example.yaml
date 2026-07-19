@@ -1,0 +1,28 @@
+# zelador taxonomy registry — the controlled tag vocabulary (SPEC.md, Tag taxonomy).
+# Copy to taxonomy.yaml and edit; the copy is yours and is never committed.
+#
+# Tags are lowercase family:value. Colours must come from the Okabe-Ito palette
+# and are allowed only in families marked `coloured`; order among coloured tags
+# is the Zotero selector position (number-key shortcut), so put the most-used
+# first. Yellow (#F0E442) is deliberately unused — coloured tags render as
+# coloured text in the selector, where yellow is illegible. An `exclusive`
+# family allows at most one of its tags per item.
+
+families:
+  status: {description: workflow state, coloured: true, exclusive: true}
+  rating: {description: subjective valuation, coloured: true, exclusive: true}
+  topic: {description: subject vocabulary}
+
+tags:
+  - tag: status:to-read
+    description: waiting to be read
+    aliases: [to-read, unread]
+    colour: "#E69F00" # Okabe-Ito orange — position 1
+  - tag: status:read
+    description: finished reading
+    aliases: [read, finished]
+    colour: "#009E73" # Okabe-Ito bluish green — position 2
+  - tag: rating:fav
+    description: favourite — worth returning to
+    aliases: [fav, favorite]
+    colour: "#CC79A7" # Okabe-Ito reddish purple — position 3

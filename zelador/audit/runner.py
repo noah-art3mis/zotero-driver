@@ -6,9 +6,10 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from zelador.audit import completeness, duplicates, hygiene, report, tagmess
+from zelador.audit import completeness, conformance, duplicates, hygiene, report, tagmess
 from zelador.audit.library import Library
 from zelador.client import ZoteroClient
+from zelador.taxonomy import Taxonomy
 
 CHECKS = {
     "completeness": completeness.check,
@@ -28,17 +29,27 @@ def run_audit(
     check: str | None = None,
     since: int | None = None,
     style: str = "apa",
+    taxonomy: Taxonomy | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Run all checks (or one), write <check>.json per check plus audit-report.md."""
-    if check is not None and check not in CHECKS:
-        raise UnknownCheck(f"unknown check {check!r} — one of: {', '.join(CHECKS)}")
-    names = [check] if check else list(CHECKS)
+    checks = dict(CHECKS)
+    if taxonomy is not None:
+        checks["registry"] = lambda library: conformance.check(library, taxonomy)
+    if check is not None and check not in checks:
+        if check == "registry":
+            raise UnknownCheck("the registry check needs taxonomy.yaml — copy the example first")
+        raise UnknownCheck(f"unknown check {check!r} — one of: {', '.join(checks)}")
+    names = [check] if check else list(checks)
 
+    tag_colors = []
+    if "registry" in names:
+        tag_colors = (client.setting("tagColors") or {}).get("value", [])
     library = Library(
         items=client.all_items(include="data,bib", style=style),
         collections=client.all_collections(),
         tags=client.all_tags(),
+        tag_colors=tag_colors,
     )
     version = client.last_modified_version
     timestamp = (now or datetime.now(UTC)).isoformat()
@@ -46,7 +57,7 @@ def run_audit(
 
     counts = {}
     for name in names:
-        findings = CHECKS[name](library)
+        findings = checks[name](library)
         if scoped is not None:
             findings = [f for f in findings if any(key in scoped for key in f["keys"])]
         payload = {

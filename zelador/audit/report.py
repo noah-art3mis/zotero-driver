@@ -9,7 +9,7 @@ from pathlib import Path
 MAX_EXAMPLES = 20
 
 # Known checks first, in spec order; anything else alphabetical after.
-CHECK_ORDER = ["completeness", "tags", "collections", "duplicates"]
+CHECK_ORDER = ["completeness", "tags", "collections", "duplicates", "registry"]
 
 
 def write_report(audit_dir: Path) -> Path:

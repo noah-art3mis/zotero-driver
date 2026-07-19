@@ -9,6 +9,7 @@ from tests.conftest import FakeZotero, make_collection, make_item, make_tag
 from zelador.audit import runner
 from zelador.client import ZoteroClient
 from zelador.config import Credentials
+from zelador.taxonomy import Family, TagEntry, Taxonomy
 
 NOW = datetime(2026, 7, 19, 12, 0, 0, tzinfo=UTC)
 
@@ -68,3 +69,14 @@ class TestRunAudit:
         runner.run_audit(client_for(fake), tmp_path, style="apa", now=NOW)
         assert any("include=data%2Cbib" in str(r.url) or "include=data,bib" in str(r.url)
                    for r in fake.requests)
+
+    def test_registry_check_runs_when_taxonomy_given(self, fake, tmp_path):
+        tax = Taxonomy(families={"status": Family()}, tags=(TagEntry("status:read"),))
+        summary = runner.run_audit(client_for(fake), tmp_path, taxonomy=tax, now=NOW)
+        assert summary["counts"]["registry"] > 0  # AI/ai tags are unregistered
+        payload = json.loads((tmp_path / "registry.json").read_text())
+        assert payload["library_version"] == 42
+
+    def test_registry_check_without_taxonomy_is_unknown(self, fake, tmp_path):
+        with pytest.raises(runner.UnknownCheck, match="taxonomy.yaml"):
+            runner.run_audit(client_for(fake), tmp_path, check="registry")

@@ -13,6 +13,8 @@ Deterministic CLI over the Zotero Web API; full design in `SPEC.md`. The agent p
 - See the collection tree → `uv run zel collections`
 - Find problems (mess, gaps, duplicates) → `uv run zel audit` then read `<data dir>/audit/*.json` and `audit-report.md`
 - Triage only recent arrivals → `uv run zel audit --since <backup version>`
+- Check the library against the tag registry → `uv run zel audit registry` (needs `taxonomy.yaml`)
+- First-run onboarding → the `zelador-setup` skill; design or revise `taxonomy.yaml` → the `zelador-taxonomy` skill
 - Bulk analytics or unsynced annotations → `uv run zel local "<SQL>" --json` (read-only snapshot of the desktop's SQLite)
 - Before proposing any change → `uv run zel backup` (verified no-op when nothing changed)
 - Check credentials/identity → `uv run zel debug whoami`
