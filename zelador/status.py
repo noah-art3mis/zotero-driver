@@ -7,16 +7,12 @@ from pathlib import Path
 
 from zelador import backup
 from zelador.config import CONFIG_FILE, TAXONOMY_FILE, Config
+from zelador.write.changelog import unresolved_ops
 
 
 def pending_sessions(log_dir: Path) -> list[str]:
     """Session logs holding unresolved `pending` entries — apply refuses while these exist."""
-    unresolved = []
-    for path in sorted(log_dir.glob("*.jsonl")):
-        with path.open() as handle:
-            if any(json.loads(line).get("status") == "pending" for line in handle if line.strip()):
-                unresolved.append(path.stem)
-    return unresolved
+    return [path.stem for path in sorted(log_dir.glob("*.jsonl")) if unresolved_ops(path)]
 
 
 def latest_audit(audit_dir: Path) -> dict | None:

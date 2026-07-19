@@ -92,7 +92,21 @@ class TestStatusCommand:
         log_dir = tmp_path / "data" / "log"
         log_dir.mkdir(parents=True)
         (log_dir / "20260701T000000Z-merge-tags.jsonl").write_text(
-            '{"op": "1", "status": "applied"}\n{"op": "2", "status": "pending"}\n'
+            '{"kind": "header", "schema": "log.v1", "plan": "20260701T000000Z-merge-tags"}\n'
+            '{"kind": "entry", "op": "op-001", "status": "pending", "operation": {}}\n'
+            '{"kind": "entry", "op": "op-002", "status": "pending", "operation": {}}\n'
+            '{"kind": "entry", "op": "op-001", "status": "applied", "version": 43}\n'
         )
         result = runner.invoke(cli.app, ["status"])
         assert "20260701T000000Z-merge-tags" in result.output
+
+    def test_fully_resolved_log_is_not_pending(self, fake, tmp_path):
+        log_dir = tmp_path / "data" / "log"
+        log_dir.mkdir(parents=True)
+        (log_dir / "20260701T000000Z-done.jsonl").write_text(
+            '{"kind": "header", "schema": "log.v1", "plan": "20260701T000000Z-done"}\n'
+            '{"kind": "entry", "op": "op-001", "status": "pending", "operation": {}}\n'
+            '{"kind": "entry", "op": "op-001", "status": "applied", "version": 43}\n'
+        )
+        result = runner.invoke(cli.app, ["status"])
+        assert "20260701T000000Z-done" not in result.output

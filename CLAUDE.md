@@ -17,6 +17,11 @@ Deterministic CLI over the Zotero Web API; full design in `SPEC.md`. The agent p
 - First-run onboarding → the `zelador-setup` skill; design or revise `taxonomy.yaml` → the `zelador-taxonomy` skill
 - Bulk analytics or unsynced annotations → `uv run zel local "<SQL>" --json` (read-only snapshot of the desktop's SQLite)
 - Before proposing any change → `uv run zel backup` (verified no-op when nothing changed)
+- Have an approved changeset → `uv run zel validate <changeset.json>` (writes a version-pinned plan to `<data dir>/plans/`)
+- Ready to execute a plan → `uv run zel apply <plan id> --dry-run` first, always; then `uv run zel apply <plan id>`
+- Regret a session → `uv run zel undo <plan id> --dry-run`, then without
+- Apply crashed mid-run (pending entries in `zel status`) → `uv run zel debug reconcile <session>`
+- Library object mangled beyond undo → `uv run zel debug restore <backup id> KEY1 KEY2` (last resort — overwrites current state)
 - Check credentials/identity → `uv run zel debug whoami`
 - Where do files live → `uv run zel debug paths`
 - Inspect a raw API response → `uv run zel debug probe "items?limit=1"`
@@ -25,7 +30,8 @@ Deterministic CLI over the Zotero Web API; full design in `SPEC.md`. The agent p
 
 - Never read `.env`; the CLI consumes it itself.
 - Reads are cheap but not free: a full dump is ~40 requests. Prefer `--since` scoping and the latest backup/audit files in `<data dir>` (see `zel debug paths`) over re-dumping.
-- Writes (`validate`/`apply`/`undo`) land in M3a — nothing mutates the library yet.
+- The change loop runs in listed order, once per approved plan: `backup` → author changeset JSON in `<data dir>/changesets/` → `validate` → user approves per intent group in chat → `apply --dry-run` → `apply`. If any group is rejected, trim the changeset and re-validate — plans are never edited by hand.
+- The closed changeset op vocabulary is defined once, in `OPS` in `zelador/write/contracts.py`; no delete op exists — trash only. Command flags and examples live in `--help`, not here.
 
 ## Development
 
