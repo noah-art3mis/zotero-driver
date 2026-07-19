@@ -97,11 +97,13 @@ def discover_zotero_dir(override: Path | None = None, wsl: bool | None = None) -
     if wsl is None:
         wsl = _is_wsl()
     if wsl:
-        candidates = sorted(WINDOWS_USERS_ROOT.glob("*/Zotero"))
+        candidates = sorted(
+            c for c in WINDOWS_USERS_ROOT.glob("*/Zotero") if (c / "zotero.sqlite").exists()
+        )
         if candidates:
             return candidates[0]
         raise ConfigError(f"no Zotero data dir found under {WINDOWS_USERS_ROOT}/*/Zotero")
     home_dir = Path.home() / "Zotero"
-    if home_dir.is_dir():
+    if (home_dir / "zotero.sqlite").exists():
         return home_dir
     raise ConfigError(f"no Zotero data dir found at {home_dir}")
