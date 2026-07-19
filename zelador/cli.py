@@ -146,9 +146,11 @@ def render_collection_tree(collections: list) -> list[str]:
             walk(key, depth + 1)
 
     walk(False, 0)
-    for key in by_key:  # subtrees whose parent key no longer exists
-        if key not in seen and by_key[key].get("parentCollection") not in by_key:
-            lines.append(f"{by_key[key]['name']}  [{key}]  (orphaned)")
+    for key, data in by_key.items():  # subtrees whose parent key no longer exists
+        if key not in seen and data.get("parentCollection") not in by_key:
+            lines.append(f"{data['name']}  [{key}]  (orphaned)")
+            seen.add(key)
+            walk(key, 1)
     return lines
 
 

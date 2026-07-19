@@ -102,6 +102,13 @@ class TestCollections:
         lines = [json.loads(line) for line in result.output.strip().splitlines()]
         assert {obj["key"] for obj in lines} == {"CCCC0001", "CCCC0002"}
 
+    def test_orphaned_subtree_rendered_not_dropped(self):
+        orphan = make_collection("DDDD0001", "lost-parent", parent="GONE9999")
+        child = make_collection("DDDD0002", "lost-child", parent="DDDD0001")
+        lines = cli.render_collection_tree([orphan, child])
+        assert any("lost-parent" in line and "orphaned" in line for line in lines)
+        assert any("lost-child" in line for line in lines)
+
 
 class TestDebug:
     def test_whoami(self, fake):
