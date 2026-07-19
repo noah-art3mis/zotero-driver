@@ -18,7 +18,7 @@ from zelador.client import BATCH_SIZE, ZoteroClient, ZoteroError
 from zelador.status import pending_sessions
 from zelador.write.changelog import SessionLog
 from zelador.write.contracts import Operation, Plan
-from zelador.write.library_state import facet_field, fetch_objects
+from zelador.write.library_state import facet_field, fetch_objects, state_equal
 
 BIG_THRESHOLD = 200  # objects; beyond this apply refuses without --big
 
@@ -186,7 +186,9 @@ def _verify(client, applied_writes: list[tuple[str, dict]], outcome: ApplyOutcom
             live = data.get(name)
             if name == "deleted":
                 live = bool(live)
-            if live != value:
+            if name == "tags":
+                live = live or []
+            if not state_equal(name, live, value):
                 outcome.mismatches.append(f"{write['key']}: {name} does not match the plan")
     outcome.verified = not outcome.mismatches
 
