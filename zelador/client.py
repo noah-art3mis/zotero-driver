@@ -98,7 +98,13 @@ class ZoteroClient:
         return response
 
     def _paginated(self, path: str, params=None, headers=None) -> list | None:
-        """Follow Link: next until exhausted. None means 304 Not Modified."""
+        """Follow Link: next until exhausted. None means 304 Not Modified.
+
+        A full page with no next link is not trusted as the end: Zotero's
+        pagination metadata can lie (/tags under-reports Total-Results and
+        drops the next link early), so the client probes the next offset
+        until a short page proves the listing is exhausted.
+        """
         url = path
         params = dict(params or {})
         params.setdefault("limit", PAGE_LIMIT)
@@ -109,13 +115,20 @@ class ZoteroClient:
                 return None
             if response.status_code == 404:
                 raise ZoteroError(f"HTTP 404 on GET {url}")
-            results.extend(response.json())
-            next_link = response.links.get("next")
-            if not next_link:
-                return results
-            url = next_link["url"]  # carries start/limit and original query
-            params = None
+            page = response.json()
+            results.extend(page)
             headers = None
+            next_link = response.links.get("next")
+            if next_link:
+                url = next_link["url"]  # carries start/limit and original query
+                params = None
+                continue
+            sent = dict(response.request.url.params)
+            if len(page) < int(sent.get("limit", PAGE_LIMIT)):
+                return results
+            sent["start"] = int(sent.get("start", 0)) + len(page)
+            url = str(response.request.url.copy_with(query=None))
+            params = sent
 
     # -- reads ---------------------------------------------------------------
 
