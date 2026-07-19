@@ -84,6 +84,38 @@ Sources, composable, all proposal-only through the standard changeset flow:
 
 Crossref disagreements with existing metadata (wrong year, mangled authors) are flagged in the audit report only — never auto-fixed.
 
+## CLI design
+
+House style distilled from `judex-mini` and `adapta` (the reference designs): humans and agents share the same interface; `--json` is the machine contract.
+
+- **Framework**: Typer, single console script `zel = "zelador.cli:app"`. Everyday verbs top-level, grouped with `rich_help_panel`; utilities under one nested `zel debug` sub-app. Modern `Annotated[T, typer.Option(...)]` signatures. English commands, kebab-case options, `--flag/--no-flag` booleans, positional argument for the primary subject.
+- **Output**: human output on stdout; diagnostics and defaulting notices on stderr (`err=True`). Every read command takes `--json` emitting newline-delimited JSON, one object per line (jq-friendly; the form agents consume). Color respects `NO_COLOR` and disables when piped. Exit codes: 0 success, 1 operational failure, 2 bad input / user abort.
+- **Safety idioms**: `--dry-run` on every mutating command printing exactly what would happen; `typer.confirm` gate unless `--yes`; forecast banner (item/request counts) before anything expensive or rate-limited.
+- **Docs**: README with aligned command table and copy-pasteable `uv run zel ...` blocks; every command docstring has an Examples block; `CLAUDE.md` carries a "situation X → run command Y" routing table for agent use.
+- **Layout**: flat package (`zelador/` at repo root), hatchling, `.env` + committed `.env.example`, thin Typer bodies over pure functions, `CliRunner` tests asserting exit codes and output. Deliberate deviation from house style: data lives in `platformdirs` user data dir, not in-repo, because this repo is public.
+
+### Command surface
+
+| Command                                     | Purpose                                                                                       |
+|---------------------------------------------|---------------------------------------------------------------------------------------------------|
+| `zel items` / `zel item <key>`              | Read items (full dump paginated, or one), `--json` NDJSON                                          |
+| `zel tags` / `zel collections`              | Read tag list (with counts and type) / collection tree, `--json`                                   |
+| `zel audit [check]`                         | Run all audit checks or one; writes JSON per check + `audit-report.md` to the data dir             |
+| `zel backup`                                | Full-library JSONL snapshot to the data dir                                                        |
+| `zel validate <changeset>`                  | Check symbolic intents against `taxonomy.yaml` + hard rules; expand into a version-pinned per-item plan |
+| `zel apply <plan>`                          | Execute an expanded plan; `--dry-run` first-class; refuses without a same-day backup; `--big` for >200 items |
+| `zel undo <session>`                        | Replay a session's change log backwards                                                            |
+| `zel lookup crossref\|arxiv`                | Deterministic enrichment lookups by DOI/id/fuzzy title, cached, candidates with scores             |
+| `zel pdf-meta <key>`                        | First-page text extraction from the local PDF for metadata recovery                                |
+| `zel local <query>`                         | Read-only analytics against a snapshot copy of the local SQLite                                    |
+| `zel debug ...`                             | Inspection utilities (config paths, cache state, raw API probe)                                    |
+
+## Changesets
+
+Changesets are **symbolic intents**, not expanded edits: a closed operation vocabulary — `merge_tag`, `add_tag`, `remove_tag`, `fill_field`, `add_to_collection`, `remove_from_collection`, `create_note`, `trash_item` (propose-only) — defined by a schema in the repo and grown only by editing that schema. `zel validate` expands intents against the live library into an exact per-item plan pinned to item versions; the expanded plan is what the user approves and what `zel apply` executes. Version pins make stale plans fail loudly per item instead of drifting silently.
+
+Enrichment logic is CLI-side (deterministic, cached, fixture-tested) — the agent's role is judgment: deciding whether a lookup candidate truly matches an item and emitting `fill_field` intents.
+
 ## Skills (shipped with the repo)
 
 The repo is public and Claude Code is the intended driver, so the workflows ship as project skills in `.claude/skills/`, written for any user, not just the author:
