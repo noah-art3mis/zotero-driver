@@ -47,7 +47,15 @@ def facet_value(data: dict, facet: str):
     raise ValueError(f"unknown facet: {facet}")
 
 
-def run_undo(session: str, client: ZoteroClient, log_dir: Path, now: datetime) -> UndoOutcome:
+def run_undo(
+    session: str,
+    client: ZoteroClient,
+    log_dir: Path,
+    now: datetime,
+    dry_run: bool = False,
+) -> UndoOutcome:
+    """Reverse a session; with dry_run the verification runs but nothing is written,
+    and `undone` counts what would reverse."""
     path = log_dir / f"{session}.jsonl"
     if not path.exists():
         raise UndoRefused(f"no session log named {session} in {log_dir}")
@@ -62,12 +70,12 @@ def run_undo(session: str, client: ZoteroClient, log_dir: Path, now: datetime) -
     if not applied:
         return outcome
     log = SessionLog(path)
-    _undo_settings(client, log, applied, outcome)
-    _undo_objects(client, log, applied, outcome)
+    _undo_settings(client, log, applied, outcome, dry_run)
+    _undo_objects(client, log, applied, outcome, dry_run)
     return outcome
 
 
-def _undo_settings(client, log, applied: list[LogEntry], outcome: UndoOutcome) -> None:
+def _undo_settings(client, log, applied: list[LogEntry], outcome: UndoOutcome, dry_run) -> None:
     for entry in applied:
         if entry.operation["kind"] != "setting":
             continue
@@ -75,6 +83,9 @@ def _undo_settings(client, log, applied: list[LogEntry], outcome: UndoOutcome) -
         live = client.setting(name)
         if (live["value"] if live else []) != entry.operation["new"]:
             outcome.conflicts.append(f"{name}: setting changed since the apply — left untouched")
+            continue
+        if dry_run:
+            outcome.undone += 1
             continue
         pin = client.last_modified_version or entry.version
         try:
@@ -86,7 +97,7 @@ def _undo_settings(client, log, applied: list[LogEntry], outcome: UndoOutcome) -
             outcome.undone += 1
 
 
-def _undo_objects(client, log, applied: list[LogEntry], outcome: UndoOutcome) -> None:
+def _undo_objects(client, log, applied: list[LogEntry], outcome: UndoOutcome, dry_run) -> None:
     groups: dict[tuple[str, str], list[LogEntry]] = {}
     for entry in applied:
         if entry.operation["kind"] == "setting":
@@ -106,6 +117,9 @@ def _undo_objects(client, log, applied: list[LogEntry], outcome: UndoOutcome) ->
         if undo_fields is None:
             continue
         writes.append((kind, {"key": key, "version": obj["version"], **undo_fields}, group))
+    if dry_run:
+        outcome.undone += sum(len(group) for _, _, group in writes)
+        return
     # reverse of apply's order: item writes first, collection objects after
     for kind, write_fn in (("item", client.write_items), ("collection", client.write_collections)):
         batch = [w for w in writes if w[0] == kind]

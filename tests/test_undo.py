@@ -163,6 +163,22 @@ class TestReplay:
         assert outcome.undone == 0 and outcome.conflicts == []
         assert [r for r in fake.requests if r.method == "POST"] == []
 
+    def test_dry_run_verifies_but_writes_nothing(self, tmp_path):
+        fake = FakeZotero(
+            items=[make_item("AAAA1111", version=5, tags=[{"tag": "t:x", "type": 0}])]
+        )
+        write_session(
+            tmp_path,
+            [(op_dict("op-001", "AAAA1111", "tags", [], [{"tag": "t:x", "type": 0}], version=1),
+              "applied", 5)],
+        )
+        outcome = run_undo(SESSION, client_for(fake), tmp_path, now=NOW, dry_run=True)
+        assert outcome.undone == 1  # would undo
+        assert fake.items[0]["data"]["tags"] == [{"tag": "t:x", "type": 0}]
+        assert [r for r in fake.requests if r.method in ("POST", "PUT")] == []
+        _, entries = read_log(tmp_path / f"{SESSION}.jsonl")
+        assert entries["op-001"].status == "applied"
+
     def test_second_undo_finds_nothing(self, tmp_path):
         fake = FakeZotero(
             items=[make_item("AAAA1111", version=5, tags=[{"tag": "t:x", "type": 0}])]
