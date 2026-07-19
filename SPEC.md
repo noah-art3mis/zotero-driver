@@ -4,7 +4,7 @@ Repo: `zotero-driver`. Package and CLI: `zelador` / `zel`.
 
 ## What it is
 
-A deterministic Python CLI over the Zotero Web API for reading, auditing, and reorganizing a personal Zotero library (~2,000 items). Claude Code is the brain; the CLI is the hands. Classification and proposal-making happen in interactive Claude Code sessions; the CLI provides the safe, deterministic read/validate/apply machinery. The chat is the approval UI.
+A deterministic Python CLI over the Zotero Web API for reading, auditing, and reorganizing a personal Zotero library. Claude Code is the brain; the CLI is the hands. Classification and proposal-making happen in interactive Claude Code sessions; the CLI provides the safe, deterministic read/validate/apply machinery. The chat is the approval UI.
 
 Explicitly out of scope: building another citation manager, writing to Zotero's SQLite database, a standalone scheduled pipeline (may be revisited later by reusing the same CLI), realtime processing, duplicate detection UI (Zotero's own is adequate for now).
 
@@ -95,6 +95,7 @@ Emits one JSON file per check under `<data dir>/audit/` (machine-readable, diffa
 2. **Tag mess** — cluster near-duplicates and case-duplicates (`Artificial Intelligence` / `artificial intelligence` / `AI`, four casings of `machine learning`), separate automatic from manual tags (the API marks tag type).
 3. **Collection hygiene** — items in no collection, empty collections, duplicate sibling names (two `Clickbait` under Detection), orphaned subtrees.
 4. **Duplicate items** — same DOI or near-identical title+year.
+5. **Citekey integrity** (only with `citekey_sources` configured — see Downstream reference workflow) — orphaned literature notes whose filename citekey matches no bib entry (evidence of past drift), and cited-but-unpinned items: citekeys present in a source whose item lacks the `Citation Key:` pin, i.e. the set a metadata edit could break.
 
 ## Enrichment (missing metadata)
 
@@ -106,6 +107,20 @@ Sources, composable, all proposal-only through the standard changeset flow:
 - **PDF extraction** — first-page text of local PDFs (2 GB storage folder reachable from WSL), fallback for orphan attachments and unsynced files only.
 
 Crossref disagreements with existing metadata (wrong year, mangled authors) are flagged in the audit report only — never auto-fixed.
+
+Enrichment edits exactly the fields Better BibTeX derives citekeys from (creators, title, date) — the pinning rule in Downstream reference workflow guards this.
+
+## Downstream reference workflow
+
+The concrete writing pipeline this tool is built to serve: Better BibTeX auto-exports the library to a `.bib` file inside an Obsidian vault; the obsidian-citation-plugin generates one `@<citekey>.md` literature note per cited item; LaTeX projects carry per-paper `.bib` files with the same citekeys. Everything downstream joins on the Better BibTeX citation key — item ↔ note filename ↔ `\cite` command.
+
+BBT derives citekeys from creators+title+year unless a `Citation Key: <key>` line in the item's `extra` field pins them; unpinned keys silently recompute when those fields change, which is exactly what enrichment does. The support is three generic seams, none Obsidian-specific:
+
+- **Citekey sources (config)** — `citekey_sources` is a list of paths: `.bib` files are parsed for their entry keys; any other path is treated as a filename glob whose basenames encode keys as `@<citekey>.md`. This is the only place the workflow enters the tool — any consumer that references items by citekey (pandoc, org-roam, a bare LaTeX repo) plugs in the same way. Unset, everything below is inert.
+- **`zel audit citekeys`** — cross-references the sources against the library (audit check 5).
+- **`pin_citekey`** — a changeset operation writing the pin line into `extra` (semantics under Changesets), plus a validation rule refusing citekey-affecting field edits on cited-but-unpinned items.
+
+The Web API never sees unpinned keys, so the configured `.bib` export is the authority for an item's current citekey; bib entries match back to items by DOI, falling back to normalized title+year.
 
 ## CLI design
 
@@ -136,9 +151,9 @@ House style distilled from `judex-mini` and `adapta` (the reference designs): hu
 
 ## Changesets
 
-Changesets are **symbolic intents**, not expanded edits: a closed operation vocabulary — `merge_tag`, `add_tag`, `remove_tag`, `fill_field`, `add_to_collection`, `remove_from_collection`, `create_note`, `trash_item` (propose-only) — defined by a schema in the repo and grown only by editing that schema. `zel validate` expands intents against the live library into an exact per-item plan pinned to item versions; the expanded plan is what the user approves and what `zel apply` executes. Version pins make stale plans fail loudly per item instead of drifting silently.
+Changesets are **symbolic intents**, not expanded edits: a closed operation vocabulary — `merge_tag`, `add_tag`, `remove_tag`, `fill_field`, `pin_citekey`, `add_to_collection`, `remove_from_collection`, `create_note`, `trash_item` (propose-only) — defined by a schema in the repo and grown only by editing that schema. `zel validate` expands intents against the live library into an exact per-item plan pinned to item versions; the expanded plan is what the user approves and what `zel apply` executes. Version pins make stale plans fail loudly per item instead of drifting silently.
 
-**Expansion semantics.** Zotero treats `tags` and `collections` as complete arrays — a partial write silently removes whatever it omits. So every tag/collection operation expands by read-modify-write of the full array, and the plan records both old and new arrays per item. `merge_tag` rewrites each carrying item's tag array (add canonical, drop aliases, preserve everything else); the alias tag may only be deleted globally after validation confirms no item still carries it. `create_note` operations carry a precomputed client-generated object key, so a retried request cannot create a duplicate and undo always knows the key. `trash_item` is a PATCH of `deleted: true` — its undo is exactly `deleted: false`, and trashed items remain listed under `/items/trash`.
+**Expansion semantics.** Zotero treats `tags` and `collections` as complete arrays — a partial write silently removes whatever it omits. So every tag/collection operation expands by read-modify-write of the full array, and the plan records both old and new arrays per item. `merge_tag` rewrites each carrying item's tag array (add canonical, drop aliases, preserve everything else); the alias tag may only be deleted globally after validation confirms no item still carries it. `create_note` operations carry a precomputed client-generated object key, so a retried request cannot create a duplicate and undo always knows the key. `trash_item` is a PATCH of `deleted: true` — its undo is exactly `deleted: false`, and trashed items remain listed under `/items/trash`. `pin_citekey` appends a `Citation Key: <key>` line to the item's `extra` field by read-modify-write (preserving existing content); the key is resolved from the configured citekey source at expansion time, and undo removes exactly that line. Validation refuses `fill_field` edits to creator/title/date fields on items that appear in a citekey source unpinned — the remedy is a `pin_citekey` op in the same changeset, which the plan orders before the field edits.
 
 **Contracts.** Three versioned JSON shapes, defined once as dataclasses + schema in the repo: `changeset.v1` (the intents), `plan.v1` (per-item operations, each with an operation id, item key, pinned item version, old state, new state, risk tier, and the backup id it binds to), and `log.v1` (operation id → pending/applied/unchanged/failed + resulting version). Approval in chat is per intent group; the plan file is what apply executes, byte-for-byte.
 
@@ -164,7 +179,7 @@ Skills encode the safety flow so it is followed by construction, not memory.
 | M2  | Taxonomy registry (`taxonomy.yaml`) designed together from M1 audit data                                             |
 | M3a | Write machinery — contracts, `zel validate` expansion, `zel apply`, `zel undo` — TDD against mocked transport and golden plan fixtures; no live writes |
 | M3b | Live shakedown: merge obvious case-duplicate tags on a handful of items, then an undo drill — smallest reversible job |
-| M3c | Metadata enrichment (the stated pain: bibliographies)                                                                |
+| M3c | Metadata enrichment (the stated pain: bibliographies) — pins citekeys of cited items before touching derived fields  |
 | M4  | Full tag rewrite against the registry (~1,500 tags → curated vocabulary)                                             |
 | M5  | Collections restructure — last, because the tree is load-bearing for CAPSTONE and this is a taxonomy conversation    |
 
@@ -181,6 +196,7 @@ Considered and rejected, with the condition that would revive each:
 | `Zotero-Write-Token` idempotency    | Redundant: precomputed client-generated keys already make creates idempotent and give undo the key                    | —                                                          |
 | Plan checksums / approval metadata  | Prototype posture: the plan file is the approved artifact and is executed byte-for-byte                               | Multiple approvers or out-of-chat approval flows           |
 | Flat registered tags                | Original taxonomy design; superseded by namespaced `family:value` tags with registry-declared colours                 | —                                                          |
+| Obsidian-side tooling (bib sync, note generation, LaTeX builds) | Better BibTeX auto-export and the obsidian-citation-plugin already do this; zelador only protects the citekey join they depend on | —                                                          |
 | File upload/download, saved searches, `/publications`, OAuth, Atom/export formats, server-side search | No consumer in any milestone; full-dump-then-filter makes query plumbing pointless surface area | A milestone that actually needs one                        |
 
 ## Process
@@ -189,4 +205,4 @@ Branch → TDD → `/review` → merge. `uv` for everything. Semantic commits.
 
 ## Library facts (as of 2026-07-19 audit snapshot)
 
-2,006 real items; 1,510 tags; sync live to zotero.org (user `noah-art3mis`, ID 11868292); 1,142 PDF annotations (Dec 2024 – May 2025) exist only locally and never synced — investigate separately; Better BibTeX installed; two group libraries present but out of scope.
+2,006 real items; 1,510 tags; sync live to zotero.org (user `noah-art3mis`, ID 11868292); 1,142 PDF annotations (Dec 2024 – May 2025) exist only locally and never synced — investigate separately; Better BibTeX installed; two group libraries present but out of scope. BBT auto-export is live (`zotero_library.bib`, 1,843 entries, inside the Obsidian vault) and feeds 178 `@citekey.md` literature notes; zero pinned citekeys library-wide, so every citekey is derived and enrichment-fragile — one orphaned note pair in the vault already evidences drift.
