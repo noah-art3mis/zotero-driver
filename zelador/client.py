@@ -1,9 +1,9 @@
 """Thin Zotero Web API v3 client on httpx.
 
-Reads only (writes land in M3a). Musts from SPEC: pagination via Link headers,
-50-key batch reads, Backoff/Retry-After honoured including on 200s, real 429
-retries, explicit timeouts, user-scoped endpoints only, API-key redaction on
-every error path.
+Musts from SPEC: pagination via Link headers, 50-key batch reads and writes
+with per-object success/unchanged/failed maps, Backoff/Retry-After honoured
+including on 200s, real 429 retries, explicit timeouts, user-scoped endpoints
+only, API-key redaction on every error path.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from itertools import batched
 
 import httpx
@@ -27,6 +28,15 @@ class ZoteroError(Exception):
     """API or transport failure, message guaranteed free of the API key."""
 
 
+@dataclass(frozen=True)
+class WriteResult:
+    """Merged per-object outcome of a batch write, keyed by object key."""
+
+    applied: dict[str, int] = field(default_factory=dict)  # key -> resulting version
+    unchanged: dict[str, int] = field(default_factory=dict)  # key -> pinned version
+    failed: dict[str, dict] = field(default_factory=dict)  # key -> {code, message}
+
+
 class ZoteroClient:
     def __init__(
         self,
@@ -41,6 +51,7 @@ class ZoteroClient:
         self._sleep = sleep
         self._trace = trace
         self._pending_backoff = 0.0
+        self._field_cache: dict[str, set[str]] = {}
         self.last_modified_version: int | None = None
         self._http = httpx.Client(
             base_url=API_BASE,
@@ -58,14 +69,18 @@ class ZoteroClient:
     def _announce(self, message: str) -> None:
         print(f"zelador: {message}", file=sys.stderr)
 
-    def _request(self, method: str, url: str, params=None, headers=None) -> httpx.Response:
+    def _request(
+        self, method: str, url: str, params=None, headers=None, json=None
+    ) -> httpx.Response:
         if self._pending_backoff:
             self._announce(f"server asked for backoff — waiting {self._pending_backoff:g}s")
             self._sleep(self._pending_backoff)
             self._pending_backoff = 0.0
         for attempt in range(MAX_RETRIES + 1):
             try:
-                response = self._http.request(method, url, params=params, headers=headers)
+                response = self._http.request(
+                    method, url, params=params, headers=headers, json=json
+                )
             except httpx.HTTPError as exc:
                 raise ZoteroError(self._redact(f"{method} {url} failed: {exc}")) from None
             if self._trace:
@@ -156,7 +171,11 @@ class ZoteroClient:
         return self._paginated(f"{self._prefix}/items", params, headers)
 
     def items_batch(
-        self, keys: list[str], include: str | None = None, style: str | None = None
+        self,
+        keys: list[str],
+        include: str | None = None,
+        style: str | None = None,
+        include_trashed: bool = False,
     ) -> list:
         """Read exactly the given item keys, chunked at the API's 50-key cap."""
         results: list = []
@@ -166,7 +185,17 @@ class ZoteroClient:
                 params["include"] = include
             if style:
                 params["style"] = style
+            if include_trashed:
+                params["includeTrashed"] = 1
             results.extend(self._get(f"{self._prefix}/items", params).json())
+        return results
+
+    def collections_batch(self, keys: list[str]) -> list:
+        """Read exactly the given collection keys, chunked at the API's 50-key cap."""
+        results: list = []
+        for chunk in batched(keys, BATCH_SIZE):
+            params = {"collectionKey": ",".join(chunk), "limit": BATCH_SIZE}
+            results.extend(self._get(f"{self._prefix}/collections", params).json())
         return results
 
     def all_collections(self) -> list:
@@ -181,6 +210,63 @@ class ZoteroClient:
         if response.status_code == 404:
             return None
         return response.json()
+
+    # -- writes --------------------------------------------------------------
+
+    def write_items(self, objects: list[dict]) -> WriteResult:
+        """Batch item write (partial updates and creates), chunked at 50."""
+        return self._write(f"{self._prefix}/items", objects)
+
+    def write_collections(self, objects: list[dict]) -> WriteResult:
+        """Batch collection write, same mechanics as items."""
+        return self._write(f"{self._prefix}/collections", objects)
+
+    def _write(self, url: str, objects: list[dict]) -> WriteResult:
+        """POST in 50-object chunks; merge per-object result maps keyed by object key.
+
+        Each object carries its own version pin — per-object conflicts arrive
+        in the failed map, never as a whole-batch rejection (SPEC: no
+        library-level If-Unmodified-Since-Version on item writes).
+        """
+        result = WriteResult()
+        for chunk in batched(objects, BATCH_SIZE):
+            response = self._request("POST", url, json=list(chunk))
+            maps = response.json()
+            version = int(response.headers["Last-Modified-Version"])
+            for key in maps.get("success", {}).values():
+                result.applied[key] = version
+            for idx, key in maps.get("unchanged", {}).items():
+                result.unchanged[key] = chunk[int(idx)]["version"]
+            for idx, error in maps.get("failed", {}).items():
+                result.failed[chunk[int(idx)]["key"]] = {
+                    "code": error.get("code"),
+                    "message": self._redact(str(error.get("message", ""))),
+                }
+        return result
+
+    def write_setting(self, name: str, value, if_unmodified_since: int) -> int:
+        """PUT a library setting, pinned to the library version; returns the new version.
+
+        Settings are the one endpoint using the library-level header — a stale
+        pin fails the whole operation loudly (HTTP 412).
+        """
+        self._request(
+            "PUT",
+            f"{self._prefix}/settings/{name}",
+            headers={"If-Unmodified-Since-Version": str(if_unmodified_since)},
+            json={"value": value},
+        )
+        assert self.last_modified_version is not None
+        return self.last_modified_version
+
+    # -- schema --------------------------------------------------------------
+
+    def item_type_fields(self, item_type: str) -> set[str]:
+        """Valid data fields for an item type (/itemTypeFields), cached per session."""
+        if item_type not in self._field_cache:
+            data = self._get("/itemTypeFields", params={"itemType": item_type}).json()
+            self._field_cache[item_type] = {f["field"] for f in data}
+        return self._field_cache[item_type]
 
     def raw(self, path_suffix: str):
         """Raw user-scoped GET for `zel debug probe` — returns the parsed JSON body."""

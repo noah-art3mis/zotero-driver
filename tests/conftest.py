@@ -59,6 +59,25 @@ def make_tag(tag: str, num_items: int = 1, tag_type: int = 0):
     return {"tag": tag, "meta": {"type": tag_type, "numItems": num_items}}
 
 
+# The subset of /itemTypeFields the tests exercise.
+ITEM_TYPE_FIELDS = {
+    "journalArticle": [
+        "title",
+        "abstractNote",
+        "publicationTitle",
+        "volume",
+        "issue",
+        "pages",
+        "date",
+        "DOI",
+        "url",
+        "extra",
+    ],
+    "book": ["title", "abstractNote", "publisher", "date", "url", "extra"],
+    "webpage": ["title", "websiteTitle", "date", "url", "extra"],
+}
+
+
 class FakeZotero:
     """Minimal stand-in for api.zotero.org: pagination, versions, backoff scripting."""
 
@@ -102,18 +121,80 @@ class FakeZotero:
                     "access": {"user": {"library": True, "write": True}},
                 }
             )
+        if path == "/itemTypeFields":
+            fields = ITEM_TYPE_FIELDS.get(params.get("itemType", ""))
+            if fields is None:
+                return httpx.Response(400, text="Invalid item type")
+            return self._json([{"field": f, "localized": f} for f in fields])
         if path == f"/users/{USER_ID}/items":
+            if request.method == "POST":
+                return self._write(request, self.items, "item")
             return self._items_response(request, params, path)
         if path == f"/users/{USER_ID}/collections":
-            return self._paginated(self.collections, params, path)
+            if request.method == "POST":
+                return self._write(request, self.collections, "collection")
+            pool = self.collections
+            if "collectionKey" in params:
+                keys = params["collectionKey"].split(",")
+                pool = [c for c in pool if c["key"] in keys]
+            return self._paginated(pool, params, path)
         if path == f"/users/{USER_ID}/tags":
             return self._paginated(self.tags, params, path)
         if path.startswith(f"/users/{USER_ID}/settings/"):
             name = path.rsplit("/", 1)[1]
+            if request.method == "PUT":
+                return self._write_setting(request, name)
             if name in self.settings:
                 return self._json(self.settings[name])
             return httpx.Response(404, text="Not found")
         return httpx.Response(404, text=f"no fake route for {path}")
+
+    def _write(self, request: httpx.Request, pool: list, kind: str) -> httpx.Response:
+        """POST batch write: partial updates and creates, per-object result maps."""
+        by_key = {o["key"]: o for o in pool}
+        new_version = self.library_version + 1
+        success: dict = {}
+        unchanged: dict = {}
+        failed: dict = {}
+        for idx, obj in enumerate(json.loads(request.content)):
+            key = obj["key"]
+            existing = by_key.get(key)
+            if existing is None:
+                data = {k: v for k, v in obj.items() if k != "version"}
+                data["version"] = new_version
+                pool.append({"key": key, "version": new_version, "meta": {}, "data": data})
+                success[str(idx)] = key
+                continue
+            if obj.get("version") != existing["version"]:
+                failed[str(idx)] = {
+                    "code": 412,
+                    "message": f"{kind} {key} has been modified since specified version",
+                }
+                continue
+            merged = {**existing["data"], **{k: v for k, v in obj.items() if k != "version"}}
+            if merged == existing["data"]:
+                unchanged[str(idx)] = key
+                continue
+            existing["data"] = merged
+            existing["version"] = new_version
+            existing["data"]["version"] = new_version
+            success[str(idx)] = key
+        if success:
+            self.library_version = new_version
+        return httpx.Response(
+            200,
+            json={"success": success, "unchanged": unchanged, "failed": failed},
+            headers=self._version_header(),
+        )
+
+    def _write_setting(self, request: httpx.Request, name: str) -> httpx.Response:
+        cond = request.headers.get("If-Unmodified-Since-Version")
+        if cond is not None and int(cond) < self.library_version:
+            return httpx.Response(412, text="Library has been modified since specified version")
+        self.library_version += 1
+        value = json.loads(request.content)["value"]
+        self.settings[name] = {"value": value, "version": self.library_version}
+        return httpx.Response(204, headers=self._version_header())
 
     def _items_response(self, request: httpx.Request, params: dict, path: str) -> httpx.Response:
         cond = request.headers.get("If-Modified-Since-Version")
