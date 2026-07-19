@@ -16,7 +16,7 @@ The agent proposes; deterministic code validates; the user approves; every appli
 
 | Area        | Decision                                                                                                                                                                                                        |
 |-------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Read path   | Zotero Web API (v3) is canonical for reads and writes. The local SQLite replica (`/mnt/c/Users/noah_/Zotero/zotero.sqlite`, read-only snapshot copies) is a secondary, explicitly-named path (`zel local ...`) for bulk analytics and direct PDF file access only |
+| Read path   | Zotero Web API (v3) is canonical for reads and writes. The local SQLite replica is a secondary, explicitly-named path (`zel local ...`) for bulk analytics and direct PDF file access only. Always read from a snapshot copy, never the live file. The Zotero data directory is auto-discovered per platform (`~/Zotero` on Linux/macOS, `%USERPROFILE%\Zotero` on Windows, mounted Windows profile under WSL — here `/mnt/c/Users/noah_/Zotero`), overridable in config |
 | Write path  | Web API only, with `If-Unmodified-Since-Version` / per-object `version` concurrency safety. Never write to SQLite                                                                                                    |
 | HTTP client | Hand-rolled thin client on `httpx` (~350 lines), not pyzotero. Rationale: pyzotero's `_batch_update` discards per-object failure maps and its 429 handling returns success without retrying — both sit on our critical path. Crib pyzotero's `_client.py` version-header conventions and test suite as reference. Revisit adoption if scope grows to attachments/file uploads |
 | Client musts | Paginated full-library dump following `Link: next` headers; batch writes chunked at 50 parsing the per-object `success`/`unchanged`/`failed` response maps; honor `Backoff`/`Retry-After` including on 200s, with real retry of 429'd requests; surface 412 version conflicts per item key |
@@ -33,7 +33,7 @@ Flat tags, controlled by a registry file (`taxonomy.yaml`) — not namespaced ta
 
 ## Safety model (three layers)
 
-1. **Pre-session snapshot** — `zel backup` dumps every item's full JSON to `~/.local/share/zelador/backups/<timestamp>.jsonl`. `zel apply` refuses to run without a snapshot from the current day. This is the undo source: Zotero's server keeps no history — item deletions go to a restorable trash, but tag removals and field overwrites are unrecoverable server-side.
+1. **Pre-session snapshot** — `zel backup` dumps every item's full JSON to `<data dir>/backups/<timestamp>.jsonl`. `zel apply` refuses to run without a snapshot from the current day. This is the undo source: Zotero's server keeps no history — item deletions go to a restorable trash, but tag removals and field overwrites are unrecoverable server-side.
 2. **Append-only change log** — every mutation appends `(item key, field, old, new, item version)` to a session JSONL. `zel undo <session>` replays it backwards.
 3. **Validator hard rules** — no item deletions ever (the agent may only propose trashing, never purge); changesets touching >200 items refuse to apply without an explicit `--big` flag; writes only to fields the changeset schema allows.
 
@@ -42,7 +42,7 @@ Free fourth layer: the local Windows SQLite replica is itself a full copy sync c
 ## Approval flow
 
 ```
-agent reads library → proposes changeset (JSON in ~/.local/share/zelador/changesets/)
+agent reads library → proposes changeset (JSON in <data dir>/changesets/)
 → zel validate (against taxonomy.yaml + hard rules)
 → agent renders compact summary in chat, user approves per group
 → zel apply --dry-run (always) → zel apply
@@ -53,10 +53,10 @@ Risk tiers: filling an empty field is low-risk (auto-appliable once trusted); ov
 
 ## Data layout
 
-The repo is public. Personal library data never lives inside the working tree — it lives under the XDG data directory, `~/.local/share/zelador/`:
+The repo is public. Personal library data never lives inside the working tree — it lives in the platform-native user data directory, resolved via `platformdirs` (`~/.local/share/zelador/` on Linux, `~/Library/Application Support/zelador/` on macOS, `%LOCALAPPDATA%\zelador\` on Windows), overridable with `ZELADOR_DATA_DIR`:
 
 ```
-~/.local/share/zelador/
+<data dir>/
   backups/     pre-session full-library JSONL snapshots
   audit/       audit output JSON + generated report
   changesets/  proposed changeset JSON files
@@ -67,7 +67,7 @@ Committed: code, `SPEC.md`, `taxonomy.yaml` (the registry is public — acceptab
 
 ## Audit (`zel audit`)
 
-Emits one JSON file per check under `~/.local/share/zelador/audit/` (machine-readable, diffable between runs) plus a generated `audit-report.md` summary.
+Emits one JSON file per check under `<data dir>/audit/` (machine-readable, diffable between runs) plus a generated `audit-report.md` summary.
 
 1. **Metadata completeness** — per item, missing DOI / date / creators / publication, scored by item type (a webpage legitimately lacks a DOI; a journal article doesn't). Judged against citation needs, not completionism. Includes standalone attachments: PDFs with no parent item, invisible to bibliographies.
 2. **Tag mess** — cluster near-duplicates and case-duplicates (`Artificial Intelligence` / `artificial intelligence` / `AI`, four casings of `machine learning`), separate automatic from manual tags (the API marks tag type).
