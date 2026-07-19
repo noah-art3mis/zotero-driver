@@ -18,6 +18,8 @@ def make_item(
     item_type: str = "journalArticle",
     title: str = "A title",
     deleted: bool = False,
+    parsed_date: str | None = None,
+    bib: str | None = None,
     **data,
 ):
     payload = {"key": key, "version": version, "itemType": item_type, "title": title}
@@ -26,13 +28,16 @@ def make_item(
     payload.update(data)
     if deleted:
         payload["deleted"] = 1
-    return {
+    item = {
         "key": key,
         "version": version,
         "library": {"type": "user"},
-        "meta": {},
+        "meta": {"parsedDate": parsed_date} if parsed_date else {},
         "data": payload,
     }
+    if bib is not None:
+        item["bib"] = bib
+    return item
 
 
 def make_collection(key: str, name: str, version: int = 1, parent: str | None = None):
