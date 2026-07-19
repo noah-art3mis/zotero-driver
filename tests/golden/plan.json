@@ -1,0 +1,247 @@
+{
+  "schema": "plan.v1",
+  "id": "20260719T120000Z-golden-sweep",
+  "slug": "golden-sweep",
+  "backup": "20260719T115900Z",
+  "library_version": 200,
+  "intents": [
+    {
+      "op": "merge_tag",
+      "from": [
+        "AI",
+        "Artificial Intelligence"
+      ],
+      "into": "topic:ai"
+    },
+    {
+      "op": "add_tag",
+      "tag": "status:read",
+      "keys": [
+        "AAAA1111"
+      ]
+    },
+    {
+      "op": "remove_tag",
+      "tag": "junk",
+      "keys": [
+        "CCCC3333"
+      ]
+    },
+    {
+      "op": "fill_field",
+      "key": "BBBB2222",
+      "field": "volume",
+      "value": "521"
+    },
+    {
+      "op": "create_collection",
+      "name": "archive",
+      "parent": null
+    },
+    {
+      "op": "add_to_collection",
+      "collection": "SHLF1111",
+      "keys": [
+        "BBBB2222"
+      ]
+    },
+    {
+      "op": "rename_collection",
+      "collection": "OLDC2222",
+      "name": "capstone"
+    },
+    {
+      "op": "trash_item",
+      "key": "CCCC3333"
+    }
+  ],
+  "operations": [
+    {
+      "id": "op-001",
+      "group": 0,
+      "op": "merge_tag",
+      "kind": "item",
+      "key": "AAAA1111",
+      "version": 7,
+      "facet": "tags",
+      "old": [
+        {
+          "tag": "AI",
+          "type": 1
+        },
+        {
+          "tag": "keep-me",
+          "type": 0
+        }
+      ],
+      "new": [
+        {
+          "tag": "keep-me",
+          "type": 0
+        },
+        {
+          "tag": "topic:ai",
+          "type": 0
+        }
+      ],
+      "risk": "high"
+    },
+    {
+      "id": "op-002",
+      "group": 0,
+      "op": "merge_tag",
+      "kind": "item",
+      "key": "BBBB2222",
+      "version": 9,
+      "facet": "tags",
+      "old": [
+        {
+          "tag": "Artificial Intelligence",
+          "type": 1
+        }
+      ],
+      "new": [
+        {
+          "tag": "topic:ai",
+          "type": 0
+        }
+      ],
+      "risk": "high"
+    },
+    {
+      "id": "op-003",
+      "group": 1,
+      "op": "add_tag",
+      "kind": "item",
+      "key": "AAAA1111",
+      "version": 7,
+      "facet": "tags",
+      "old": [
+        {
+          "tag": "keep-me",
+          "type": 0
+        },
+        {
+          "tag": "topic:ai",
+          "type": 0
+        }
+      ],
+      "new": [
+        {
+          "tag": "keep-me",
+          "type": 0
+        },
+        {
+          "tag": "topic:ai",
+          "type": 0
+        },
+        {
+          "tag": "status:read",
+          "type": 0
+        }
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "op-004",
+      "group": 2,
+      "op": "remove_tag",
+      "kind": "item",
+      "key": "CCCC3333",
+      "version": 11,
+      "facet": "tags",
+      "old": [
+        {
+          "tag": "junk"
+        }
+      ],
+      "new": [],
+      "risk": "high"
+    },
+    {
+      "id": "op-005",
+      "group": 3,
+      "op": "fill_field",
+      "kind": "item",
+      "key": "BBBB2222",
+      "version": 9,
+      "facet": "field:volume",
+      "old": "",
+      "new": "521",
+      "risk": "low"
+    },
+    {
+      "id": "op-006",
+      "group": 4,
+      "op": "create_collection",
+      "kind": "collection",
+      "key": "NEWC0001",
+      "version": 0,
+      "facet": "object",
+      "old": null,
+      "new": {
+        "name": "archive",
+        "parentCollection": false
+      },
+      "risk": "low"
+    },
+    {
+      "id": "op-007",
+      "group": 5,
+      "op": "add_to_collection",
+      "kind": "item",
+      "key": "BBBB2222",
+      "version": 9,
+      "facet": "collections",
+      "old": [],
+      "new": [
+        "SHLF1111"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "op-008",
+      "group": 6,
+      "op": "rename_collection",
+      "kind": "collection",
+      "key": "OLDC2222",
+      "version": 4,
+      "facet": "name",
+      "old": "finished-projects",
+      "new": "capstone",
+      "risk": "low"
+    },
+    {
+      "id": "op-009",
+      "group": 7,
+      "op": "trash_item",
+      "kind": "item",
+      "key": "CCCC3333",
+      "version": 11,
+      "facet": "deleted",
+      "old": false,
+      "new": true,
+      "risk": "high"
+    }
+  ],
+  "settings": {
+    "name": "tagColors",
+    "version": 200,
+    "old": [
+      {
+        "name": "ler",
+        "color": "#FF0000"
+      }
+    ],
+    "new": [
+      {
+        "name": "status:to-read",
+        "color": "#E69F00"
+      },
+      {
+        "name": "status:read",
+        "color": "#009E73"
+      }
+    ]
+  }
+}
