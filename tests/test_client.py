@@ -167,3 +167,25 @@ class TestLibraryVersion:
         client = client_for(fake)
         assert client.library_version() == 77
         assert len(fake.requests) == 1
+
+
+class TestLyingPaginationMetadata:
+    def test_full_page_without_next_link_probes_further(self):
+        # Zotero's /tags endpoint under-reports Total-Results and stops
+        # emitting Link: next while more pages exist (observed live: 586
+        # claimed, 1510 real). A full page therefore never means done —
+        # the client must probe the next offset until a short page.
+        fake = FakeZotero(
+            tags=[make_tag(f"t{i}") for i in range(250)],
+            page_size=100,
+            emit_next_links=False,
+        )
+        client = client_for(fake)
+        assert len(client.all_tags()) == 250
+        assert len(fake.requests) == 3  # 100 + 100 + 50
+
+    def test_short_page_without_next_link_still_terminates(self):
+        fake = FakeZotero(tags=[make_tag("only")], page_size=100, emit_next_links=False)
+        client = client_for(fake)
+        assert len(client.all_tags()) == 1
+        assert len(fake.requests) == 1

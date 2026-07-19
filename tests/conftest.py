@@ -70,6 +70,7 @@ class FakeZotero:
         settings: dict | None = None,
         library_version: int = 42,
         page_size: int = 2,
+        emit_next_links: bool = True,
     ):
         self.items = items or []
         self.collections = collections or []
@@ -77,6 +78,7 @@ class FakeZotero:
         self.settings = settings or {}
         self.library_version = library_version
         self.page_size = page_size
+        self.emit_next_links = emit_next_links  # False mimics /tags' broken metadata
         self.requests: list[httpx.Request] = []
         self.script: deque[httpx.Response] = deque()  # scripted responses jump the queue
 
@@ -138,7 +140,7 @@ class FakeZotero:
         page = pool[start : start + limit]
         headers = self._version_header()
         headers["Total-Results"] = str(len(pool))
-        if start + limit < len(pool):
+        if self.emit_next_links and start + limit < len(pool):
             carried = {k: v for k, v in params.items() if k not in ("start", "limit")}
             query = "".join(f"&{k}={v}" for k, v in carried.items())
             headers["Link"] = (
