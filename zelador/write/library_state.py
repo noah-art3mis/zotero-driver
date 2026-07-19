@@ -31,6 +31,16 @@ def facet_value(data: dict, facet: str):
     raise ValueError(f"unknown facet: {facet}")
 
 
+def state_equal(facet: str, a, b) -> bool:
+    """Facet-state equality under the server's serialization: Zotero omits a
+    manual tag's type, so absent type and type 0 are the same tag."""
+    if facet == "tags":
+        return [(t["tag"], t.get("type", 0)) for t in a] == [
+            (t["tag"], t.get("type", 0)) for t in b
+        ]
+    return a == b
+
+
 def setting_value(setting: dict | None) -> list:
     """A settings GET result flattened to its comparable value; unset means []."""
     return setting["value"] if setting else []

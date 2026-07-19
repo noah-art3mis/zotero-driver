@@ -167,7 +167,7 @@ class FakeZotero:
             key = obj["key"]
             existing = by_key.get(key)
             if existing is None:
-                data = {k: v for k, v in obj.items() if k != "version"}
+                data = self._server_form({k: v for k, v in obj.items() if k != "version"})
                 data["version"] = new_version
                 pool.append({"key": key, "version": new_version, "meta": {}, "data": data})
                 success[str(idx)] = key
@@ -178,7 +178,9 @@ class FakeZotero:
                     "message": f"{kind} {key} has been modified since specified version",
                 }
                 continue
-            merged = {**existing["data"], **{k: v for k, v in obj.items() if k != "version"}}
+            merged = self._server_form(
+                {**existing["data"], **{k: v for k, v in obj.items() if k != "version"}}
+            )
             if merged == existing["data"]:
                 unchanged[str(idx)] = key
                 continue
@@ -193,6 +195,16 @@ class FakeZotero:
             json={"success": success, "unchanged": unchanged, "failed": failed},
             headers=self._version_header(),
         )
+
+    @staticmethod
+    def _server_form(data: dict) -> dict:
+        """Zotero serializes manual tags without their default type (matches live API)."""
+        if "tags" in data:
+            data["tags"] = [
+                {k: v for k, v in t.items() if not (k == "type" and v == 0)}
+                for t in data["tags"]
+            ]
+        return data
 
     def _write_setting(self, request: httpx.Request, name: str) -> httpx.Response:
         cond = request.headers.get("If-Unmodified-Since-Version")
