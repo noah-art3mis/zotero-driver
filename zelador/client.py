@@ -169,6 +169,10 @@ class ZoteroClient:
             return None
         return response.json()
 
+    def raw(self, path_suffix: str):
+        """Raw user-scoped GET for `zel debug probe` — returns the parsed JSON body."""
+        return self._get(f"{self._prefix}/{path_suffix.lstrip('/')}").json()
+
     def key_info(self) -> dict:
         """Identity and access of the current API key (/keys/current)."""
         return self._get("/keys/current").json()

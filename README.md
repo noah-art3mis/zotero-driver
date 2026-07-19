@@ -19,7 +19,13 @@ uv run zel --help
 
 Command surface lands milestone by milestone; the table below tracks what exists.
 
-| Command | What it does |
-| ------- | ------------ |
+| Command                  | What it does                                                          |
+| ------------------------ | --------------------------------------------------------------------- |
+| `zel items [keys...]`    | Full paginated dump, or batch read; `--since`, `--json`, `--bib`      |
+| `zel tags`               | Tag list with item counts and manual/auto type; `--json`              |
+| `zel collections`        | Collection tree; `--json`                                             |
+| `zel debug whoami`       | Identity and access of the configured API key                         |
+| `zel debug paths`        | Resolved paths: data dir, config files, Zotero data dir               |
+| `zel debug probe <path>` | Raw GET of a user-scoped API path, pretty-printed                     |
 
 Data (backups, audit output, plans, logs) lives in the platform user data dir (`~/.local/share/zelador/` on Linux), overridable with `ZELADOR_DATA_DIR` — never inside this repo.
