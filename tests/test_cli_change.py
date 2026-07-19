@@ -211,6 +211,17 @@ class TestRestore:
         assert result.exit_code == 0, result.output
         assert fake.items[1]["data"]["title"] == "A title"
 
+    def test_dry_run_previews_without_writing(self, env, tmp_path):
+        fake, _ = env
+        runner.invoke(cli.app, ["backup"])
+        backup_id = next((tmp_path / "data" / "backups").glob("*.jsonl")).stem
+        fake.items[1]["data"]["title"] = "MANGLED"
+        before = len(fake.requests)
+        result = runner.invoke(cli.app, ["debug", "restore", backup_id, "BBBB2222", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert [r for r in fake.requests[before:] if r.method == "POST"] == []
+        assert fake.items[1]["data"]["title"] == "MANGLED"
+
     def test_unknown_key_exit_2(self, env, tmp_path):
         runner.invoke(cli.app, ["backup"])
         backup_id = next((tmp_path / "data" / "backups").glob("*.jsonl")).stem

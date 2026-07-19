@@ -18,6 +18,7 @@ from zelador.client import BATCH_SIZE, ZoteroClient, ZoteroError
 from zelador.status import pending_sessions
 from zelador.write.changelog import SessionLog
 from zelador.write.contracts import Operation, Plan
+from zelador.write.library_state import facet_field, fetch_objects, setting_value
 
 BIG_THRESHOLD = 200  # objects; beyond this apply refuses without --big
 
@@ -70,10 +71,8 @@ def compose_writes(operations: list[Operation]) -> list[tuple[str, dict, list[Op
         for op in ops:
             if op.facet == "object":
                 write.update(op.new)
-            elif op.facet.startswith("field:"):
-                write[op.facet.removeprefix("field:")] = op.new
             else:
-                write[op.facet] = op.new
+                write[facet_field(op.facet)] = op.new
         writes.append((kind, write, ops))
     return writes
 
@@ -94,39 +93,48 @@ def run_apply(
     applied_writes: list[tuple[str, dict]] = []
     # collections first: item memberships may reference collections created in this plan
     for kind in ("collection", "item"):
-        batch = [w for w in writes if w[0] == kind]
+        write_fn = client.write_collections if kind == "collection" else client.write_items
+        batch = [
+            (write, [asdict(op) for op in ops]) for k, write, ops in writes if k == kind
+        ]
         for chunk in batched(batch, BATCH_SIZE):
-            _execute_chunk(client, log, kind, list(chunk), outcome, applied_writes)
+            applied = execute_chunk(write_fn, log, list(chunk), outcome)
+            applied_writes.extend((kind, write) for write in applied)
     if plan.settings:
         _write_settings(client, log, plan.settings, outcome)
     _verify(client, applied_writes, outcome)
     return outcome
 
 
-def _execute_chunk(client, log, kind, chunk, outcome, applied_writes) -> None:
-    payload = [write for _, write, _ in chunk]
-    log.pending([asdict(op) for _, _, ops in chunk for op in ops])
-    if kind == "collection":
-        result = client.write_collections(payload)
-    else:
-        result = client.write_items(payload)
-    for _, write, ops in chunk:
+def execute_chunk(
+    write_fn, log: SessionLog, chunk: list[tuple[dict, list[dict]]], outcome: ApplyOutcome
+) -> list[dict]:
+    """Write-ahead one chunk: pending entries, one request, per-object resolutions.
+
+    `chunk` pairs each write object with its operation records; returns the
+    writes that applied (for verification). Shared with zel debug restore.
+    """
+    log.pending([op for _, ops in chunk for op in ops])
+    result = write_fn([write for write, _ in chunk])
+    applied_writes = []
+    for write, ops in chunk:
         key = write["key"]
         if key in result.applied:
             for op in ops:
-                log.resolve(op.id, "applied", result.applied[key])
+                log.resolve(op["id"], "applied", result.applied[key])
             outcome.applied += len(ops)
-            applied_writes.append((kind, write))
+            applied_writes.append(write)
         elif key in result.unchanged:
             for op in ops:
-                log.resolve(op.id, "unchanged", result.unchanged[key])
+                log.resolve(op["id"], "unchanged", result.unchanged[key])
             outcome.unchanged += len(ops)
         else:
             error = result.failed.get(key) or {"code": None, "message": "no per-object result"}
             for op in ops:
-                log.resolve(op.id, "failed")
+                log.resolve(op["id"], "failed")
             outcome.failed += len(ops)
             outcome.failures.append({"key": key, **error})
+    return applied_writes
 
 
 def _write_settings(client, log, settings: dict, outcome: ApplyOutcome) -> None:
@@ -146,8 +154,7 @@ def _write_settings(client, log, settings: dict, outcome: ApplyOutcome) -> None:
     # Our own item writes have already moved the library version past the plan's
     # pin, so the pin alone can't guard this write. Re-read instead: refuse when
     # the live value drifted from the plan's old, then pin to the version just seen.
-    live = client.setting(settings["name"])
-    if (live["value"] if live else []) != settings["old"]:
+    if setting_value(client.setting(settings["name"])) != settings["old"]:
         log.resolve("settings", "failed")
         outcome.failed += 1
         outcome.failures.append(
@@ -172,20 +179,17 @@ def _write_settings(client, log, settings: dict, outcome: ApplyOutcome) -> None:
 
 def _verify(client, applied_writes: list[tuple[str, dict]], outcome: ApplyOutcome) -> None:
     """Fetch exactly the touched objects back and compare against the composed writes."""
-    item_keys = [w["key"] for kind, w in applied_writes if kind == "item"]
-    coll_keys = [w["key"] for kind, w in applied_writes if kind == "collection"]
-    current: dict[tuple[str, str], dict] = {}
-    if item_keys:
-        for obj in client.items_batch(item_keys, include_trashed=True):
-            current[("item", obj["key"])] = obj["data"]
-    if coll_keys:
-        for obj in client.collections_batch(coll_keys):
-            current[("collection", obj["key"])] = obj["data"]
+    current = fetch_objects(
+        client,
+        [w["key"] for kind, w in applied_writes if kind == "item"],
+        [w["key"] for kind, w in applied_writes if kind == "collection"],
+    )
     for kind, write in applied_writes:
-        data = current.get((kind, write["key"]))
-        if data is None:
+        obj = current.get((kind, write["key"]))
+        if obj is None:
             outcome.mismatches.append(f"{write['key']}: not found on re-read")
             continue
+        data = obj["data"]
         for name, value in write.items():
             if name in ("key", "version"):
                 continue

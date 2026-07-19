@@ -135,6 +135,19 @@ class TestRestore:
         assert outcome.applied == 1
         assert fake.collections[0]["data"]["name"] == "Original shelf"
 
+    def test_dry_run_writes_nothing_and_keeps_no_log(self, tmp_path):
+        backup = self.backup_file(tmp_path)
+        fake = FakeZotero(items=[make_item("AAAA1111", version=120, title="MANGLED")],
+                          library_version=120)
+        log_dir = tmp_path / "log"
+        log_dir.mkdir()
+        outcome = run_restore(backup, ["AAAA1111"], client_for(fake), log_dir, now=NOW,
+                              dry_run=True)
+        assert outcome.applied == 1  # would restore
+        assert fake.items[0]["data"]["title"] == "MANGLED"
+        assert [r for r in fake.requests if r.method == "POST"] == []
+        assert list(log_dir.glob("*.jsonl")) == []
+
     def test_key_absent_from_backup_refused(self, tmp_path):
         backup = self.backup_file(tmp_path)
         log_dir = tmp_path / "log"

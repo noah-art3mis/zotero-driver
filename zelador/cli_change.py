@@ -199,9 +199,7 @@ def undo(
             note("aborted")
             raise typer.Exit(2)
         try:
-            outcome = undo_mod.run_undo(
-                session, _cli().make_client(), log_dir, now=datetime.now(UTC), dry_run=dry_run
-            )
+            outcome = undo_mod.run_undo(session, _cli().make_client(), log_dir, dry_run=dry_run)
         except undo_mod.UndoRefused as exc:
             note(f"refused: {exc}")
             raise typer.Exit(1) from None
@@ -254,6 +252,9 @@ def reconcile(
 def restore(
     backup: Annotated[str, typer.Argument(help="Backup id (resolved in backups/) or path.")],
     keys: Annotated[list[str], typer.Argument(help="Object keys to restore from it.")],
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Resolve and count, touch nothing.")
+    ] = False,
     yes: Annotated[bool, typer.Option("--yes", help="Skip the confirmation gate.")] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Final outcome object.")] = False,
 ):
@@ -263,11 +264,12 @@ def restore(
     whatever state the accident left. Logged like any session.
 
     Examples:
+        zel debug restore 20260719T115900Z AAAA1111 BBBB2222 --dry-run
         zel debug restore 20260719T115900Z AAAA1111 BBBB2222 --yes
     """
     with _cli().guard():
         path = _resolve(backup, config.ensure_dir("backups"), ".jsonl")
-        if not yes and not typer.confirm(
+        if not dry_run and not yes and not typer.confirm(
             f"restore {len(keys)} object(s) from {path.name}? this overwrites their current state"
         ):
             note("aborted")
@@ -279,6 +281,7 @@ def restore(
                 _cli().make_client(),
                 config.ensure_dir("log"),
                 now=datetime.now(UTC),
+                dry_run=dry_run,
             )
         except recover_mod.RestoreError as exc:
             note(f"error: {exc}")
@@ -286,6 +289,7 @@ def restore(
         if as_json:
             emit_ndjson(
                 {
+                    "dry_run": dry_run,
                     "applied": outcome.applied,
                     "unchanged": outcome.unchanged,
                     "failed": outcome.failed,
@@ -293,6 +297,8 @@ def restore(
                     "log": outcome.log_path,
                 }
             )
+        elif dry_run:
+            print(f"would restore {outcome.applied} object(s) from {path.name} — nothing written")
         else:
             print(
                 f"restored {outcome.applied}, unchanged {outcome.unchanged}, "

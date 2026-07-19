@@ -1,7 +1,5 @@
 """Tests for zel undo — backwards replay with current-state verification."""
 
-from datetime import UTC, datetime
-
 import pytest
 
 from tests.conftest import USER_ID, FakeZotero, make_collection, make_item
@@ -10,7 +8,6 @@ from zelador.config import Credentials
 from zelador.write.changelog import SessionLog, read_log
 from zelador.write.undo import UndoRefused, run_undo
 
-NOW = datetime(2026, 7, 19, 13, 0, 0, tzinfo=UTC)
 SESSION = "20260719T120000Z-test-change"
 
 
@@ -40,14 +37,14 @@ def op_dict(op_id, key, facet, old, new, kind="item", version=1):
 class TestRefusals:
     def test_missing_session(self, tmp_path):
         with pytest.raises(UndoRefused, match="no session"):
-            run_undo("nope", client_for(FakeZotero()), tmp_path, now=NOW)
+            run_undo("nope", client_for(FakeZotero()), tmp_path)
 
     def test_pending_entries_refused(self, tmp_path):
         log = SessionLog(tmp_path / f"{SESSION}.jsonl")
         log.start(plan=SESSION, backup="b", timestamp="t")
         log.pending([op_dict("op-001", "AAAA1111", "tags", [], [])])
         with pytest.raises(UndoRefused, match="reconcile"):
-            run_undo(SESSION, client_for(FakeZotero()), tmp_path, now=NOW)
+            run_undo(SESSION, client_for(FakeZotero()), tmp_path)
 
 
 class TestReplay:
@@ -62,7 +59,7 @@ class TestReplay:
             [(op_dict("op-001", "AAAA1111", "tags", [], [{"tag": "t:x", "type": 0}], version=1),
               "applied", 5)],
         )
-        outcome = run_undo(SESSION, client_for(fake), tmp_path, now=NOW)
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
         assert outcome.undone == 1 and outcome.conflicts == []
         assert fake.items[0]["data"]["tags"] == []
         _, entries = read_log(tmp_path / f"{SESSION}.jsonl")
@@ -79,7 +76,7 @@ class TestReplay:
             [(op_dict("op-001", "AAAA1111", "tags", [], [{"tag": "t:x", "type": 0}], version=1),
               "applied", 5)],
         )
-        outcome = run_undo(SESSION, client_for(fake), tmp_path, now=NOW)
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
         assert outcome.undone == 0
         assert any("AAAA1111" in c for c in outcome.conflicts)
         assert fake.items[0]["data"]["tags"] == drifted
@@ -107,7 +104,7 @@ class TestReplay:
                 (op_dict("op-002", "AAAA1111", "tags", mid, final, version=1), "applied", 5),
             ],
         )
-        outcome = run_undo(SESSION, client_for(fake), tmp_path, now=NOW)
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
         assert outcome.undone == 2
         assert fake.items[0]["data"]["tags"] == first_old
 
@@ -121,9 +118,31 @@ class TestReplay:
             [(op_dict("op-001", "NEWC0001", "object", None, created,
                       kind="collection", version=0), "applied", 5)],
         )
-        outcome = run_undo(SESSION, client_for(fake), tmp_path, now=NOW)
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
         assert outcome.undone == 1
         assert fake.collections[0]["data"]["deleted"] is True  # trashed, never purged
+
+    def test_created_then_renamed_collection_still_undoes(self, tmp_path):
+        # One plan created a collection and renamed it — the coalesced write
+        # carried the final name, so verification must use the composed state,
+        # not the creation-time state.
+        fake = FakeZotero(
+            collections=[make_collection("NEWC0001", "renamed", version=5)], library_version=5
+        )
+        created = {"name": "archive", "parentCollection": False}
+        write_session(
+            tmp_path,
+            [
+                (op_dict("op-001", "NEWC0001", "object", None, created,
+                         kind="collection", version=0), "applied", 5),
+                (op_dict("op-002", "NEWC0001", "name", "archive", "renamed",
+                         kind="collection", version=0), "applied", 5),
+            ],
+        )
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
+        assert outcome.conflicts == []
+        assert outcome.undone == 2
+        assert fake.collections[0]["data"]["deleted"] is True
 
     def test_trash_item_undone_by_untrashing(self, tmp_path):
         fake = FakeZotero(items=[make_item("AAAA1111", version=5, deleted=True)])
@@ -131,7 +150,7 @@ class TestReplay:
             tmp_path,
             [(op_dict("op-001", "AAAA1111", "deleted", False, True, version=1), "applied", 5)],
         )
-        outcome = run_undo(SESSION, client_for(fake), tmp_path, now=NOW)
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
         assert outcome.undone == 1
         assert not fake.items[0]["data"]["deleted"]
 
@@ -144,7 +163,7 @@ class TestReplay:
             "version": 4, "old": old_value, "new": new_value,
         }
         write_session(tmp_path, [(entry, "applied", 5)])
-        outcome = run_undo(SESSION, client_for(fake), tmp_path, now=NOW)
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
         assert outcome.undone == 1
         assert fake.settings["tagColors"]["value"] == old_value
 
@@ -159,7 +178,7 @@ class TestReplay:
                  "unchanged", 1),
             ],
         )
-        outcome = run_undo(SESSION, client_for(fake), tmp_path, now=NOW)
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
         assert outcome.undone == 0 and outcome.conflicts == []
         assert [r for r in fake.requests if r.method == "POST"] == []
 
@@ -172,7 +191,7 @@ class TestReplay:
             [(op_dict("op-001", "AAAA1111", "tags", [], [{"tag": "t:x", "type": 0}], version=1),
               "applied", 5)],
         )
-        outcome = run_undo(SESSION, client_for(fake), tmp_path, now=NOW, dry_run=True)
+        outcome = run_undo(SESSION, client_for(fake), tmp_path, dry_run=True)
         assert outcome.undone == 1  # would undo
         assert fake.items[0]["data"]["tags"] == [{"tag": "t:x", "type": 0}]
         assert [r for r in fake.requests if r.method in ("POST", "PUT")] == []
@@ -188,6 +207,6 @@ class TestReplay:
             [(op_dict("op-001", "AAAA1111", "tags", [], [{"tag": "t:x", "type": 0}], version=1),
               "applied", 5)],
         )
-        run_undo(SESSION, client_for(fake), tmp_path, now=NOW)
-        again = run_undo(SESSION, client_for(fake), tmp_path, now=NOW)
+        run_undo(SESSION, client_for(fake), tmp_path)
+        again = run_undo(SESSION, client_for(fake), tmp_path)
         assert again.undone == 0 and again.conflicts == []

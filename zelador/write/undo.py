@@ -11,12 +11,12 @@ create_collection trashes the collection by its precomputed key, never a purge.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from itertools import batched
 from pathlib import Path
 
 from zelador.client import BATCH_SIZE, ZoteroClient, ZoteroError
 from zelador.write.changelog import LogEntry, SessionLog, read_log
+from zelador.write.library_state import facet_field, facet_value, fetch_objects, setting_value
 
 
 class UndoRefused(Exception):
@@ -30,28 +30,10 @@ class UndoOutcome:
     failures: list[dict] = field(default_factory=list)
 
 
-def facet_value(data: dict, facet: str):
-    """The current value of an operation's facet, read from an object's data."""
-    if facet == "tags":
-        return data.get("tags", [])
-    if facet == "collections":
-        return data.get("collections", [])
-    if facet.startswith("field:"):
-        return data.get(facet.removeprefix("field:")) or ""
-    if facet == "name":
-        return data.get("name")
-    if facet == "parentCollection":
-        return data.get("parentCollection", False)
-    if facet == "deleted":
-        return bool(data.get("deleted", False))
-    raise ValueError(f"unknown facet: {facet}")
-
-
 def run_undo(
     session: str,
     client: ZoteroClient,
     log_dir: Path,
-    now: datetime,
     dry_run: bool = False,
 ) -> UndoOutcome:
     """Reverse a session; with dry_run the verification runs but nothing is written,
@@ -80,8 +62,7 @@ def _undo_settings(client, log, applied: list[LogEntry], outcome: UndoOutcome, d
         if entry.operation["kind"] != "setting":
             continue
         name = entry.operation["key"]
-        live = client.setting(name)
-        if (live["value"] if live else []) != entry.operation["new"]:
+        if setting_value(client.setting(name)) != entry.operation["new"]:
             outcome.conflicts.append(f"{name}: setting changed since the apply — left untouched")
             continue
         if dry_run:
@@ -106,7 +87,11 @@ def _undo_objects(client, log, applied: list[LogEntry], outcome: UndoOutcome, dr
         groups.setdefault((op["kind"], op["key"]), []).append(entry)
     if not groups:
         return
-    current = _fetch_current(client, groups)
+    current = fetch_objects(
+        client,
+        [key for kind, key in groups if kind == "item"],
+        [key for kind, key in groups if kind == "collection"],
+    )
     writes: list[tuple[str, dict, list[LogEntry]]] = []
     for (kind, key), group in groups.items():
         obj = current.get((kind, key))
@@ -133,43 +118,39 @@ def _reverse_group(key, group: list[LogEntry], data: dict, outcome: UndoOutcome)
     by_facet: dict[str, list[LogEntry]] = {}
     for entry in group:
         by_facet.setdefault(entry.operation["facet"], []).append(entry)
+    if "object" in by_facet:
+        return _reverse_created(key, group, by_facet, data, outcome)
     undo_fields: dict = {}
     for facet, entries in by_facet.items():
-        if facet == "object":
-            created = entries[-1].operation["new"]
-            matches = (
-                data.get("name") == created["name"]
-                and data.get("parentCollection", False) == created["parentCollection"]
-                and not data.get("deleted")
-            )
-            if not matches:
-                outcome.conflicts.append(
-                    f"{key}: collection no longer matches its creation state — left untouched"
-                )
-                return None
-            undo_fields["deleted"] = True  # trash by the precomputed key, never a hard delete
-        else:
-            if facet_value(data, facet) != entries[-1].operation["new"]:
-                outcome.conflicts.append(f"{key}: {facet} changed since the apply — left untouched")
-                return None
-            value = entries[0].operation["old"]
-            undo_fields[facet.removeprefix("field:") if facet.startswith("field:") else facet] = (
-                value
-            )
+        if facet_value(data, facet) != entries[-1].operation["new"]:
+            outcome.conflicts.append(f"{key}: {facet} changed since the apply — left untouched")
+            return None
+        undo_fields[facet_field(facet)] = entries[0].operation["old"]
     return undo_fields
 
 
-def _fetch_current(client, groups) -> dict[tuple[str, str], dict]:
-    item_keys = [key for kind, key in groups if kind == "item"]
-    coll_keys = [key for kind, key in groups if kind == "collection"]
-    current: dict[tuple[str, str], dict] = {}
-    if item_keys:
-        for obj in client.items_batch(item_keys, include_trashed=True):
-            current[("item", obj["key"])] = obj
-    if coll_keys:
-        for obj in client.collections_batch(coll_keys):
-            current[("collection", obj["key"])] = obj
-    return current
+def _reverse_created(key, group, by_facet, data: dict, outcome: UndoOutcome) -> dict | None:
+    """Undoing a create is a trash by the precomputed key, never a hard delete.
+
+    The coalesced write carried the composed state — creation values overlaid
+    by any rename/move in the same plan — so verification composes the same way.
+    """
+    expected = dict(by_facet["object"][-1].operation["new"])
+    for entry in group:
+        facet = entry.operation["facet"]
+        if facet in ("name", "parentCollection"):
+            expected[facet] = entry.operation["new"]
+    matches = (
+        data.get("name") == expected["name"]
+        and data.get("parentCollection", False) == expected["parentCollection"]
+        and not data.get("deleted")
+    )
+    if not matches:
+        outcome.conflicts.append(
+            f"{key}: collection no longer matches the state this plan left — left untouched"
+        )
+        return None
+    return {"deleted": True}
 
 
 def _execute_chunk(write_fn, log, chunk, outcome: UndoOutcome) -> None:
