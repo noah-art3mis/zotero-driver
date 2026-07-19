@@ -66,6 +66,25 @@ class TestLoad:
         with pytest.raises(taxonomy.TaxonomyError, match="tags"):
             load(tmp_path, "families:\n  status: {}\n")
 
+    def test_tag_entry_must_be_a_mapping(self, tmp_path):
+        with pytest.raises(taxonomy.TaxonomyError, match="mapping"):
+            load(tmp_path, "families:\n  status: {}\ntags:\n  - status:read\n")
+
+    def test_family_spec_must_be_a_mapping(self, tmp_path):
+        with pytest.raises(taxonomy.TaxonomyError, match="mapping"):
+            load(tmp_path, "families:\n  status: workflow state\ntags: []\n")
+
+    def test_unknown_keys_rejected(self, tmp_path):
+        bad_tag = (
+            "families:\n  status: {coloured: true}\n"
+            "tags:\n  - tag: status:read\n    color: '#009E73'\n"
+        )
+        with pytest.raises(taxonomy.TaxonomyError, match="color"):
+            load(tmp_path, bad_tag)
+        bad_family = "families:\n  status: {colored: true}\ntags: []\n"
+        with pytest.raises(taxonomy.TaxonomyError, match="colored"):
+            load(tmp_path, bad_family)
+
     def test_example_registry_is_valid(self):
         tax = taxonomy.load_taxonomy(REPO_ROOT / "taxonomy.example.yaml")
         assert "status" in tax.families

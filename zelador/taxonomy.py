@@ -89,24 +89,41 @@ def load_taxonomy(path: Path = TAXONOMY_FILE) -> Taxonomy:
         raise TaxonomyError(f"{path} must declare a 'tags' list")
     families = {}
     for name, spec in raw["families"].items():
-        spec = spec or {}
+        spec = _mapping(
+            spec or {}, f"family {name!r}", {"description", "coloured", "exclusive"}, path
+        )
         families[str(name)] = Family(
             description=str(spec.get("description", "")),
             coloured=bool(spec.get("coloured", False)),
             exclusive=bool(spec.get("exclusive", False)),
         )
-    entries = tuple(
-        TagEntry(
-            tag=str(entry.get("tag", "")),
-            description=str(entry.get("description", "")),
-            aliases=tuple(str(a) for a in entry.get("aliases") or ()),
-            colour=entry.get("colour"),
+    entries = []
+    for entry in raw["tags"]:
+        entry = _mapping(entry, "tag entry", {"tag", "description", "aliases", "colour"}, path)
+        entries.append(
+            TagEntry(
+                tag=str(entry.get("tag", "")),
+                description=str(entry.get("description", "")),
+                aliases=tuple(str(a) for a in entry.get("aliases") or ()),
+                colour=entry.get("colour"),
+            )
         )
-        for entry in raw["tags"]
-    )
-    taxonomy = Taxonomy(families=families, tags=entries)
+    taxonomy = Taxonomy(families=families, tags=tuple(entries))
     _lint(taxonomy, path)
     return taxonomy
+
+
+def _mapping(value, what: str, allowed: set[str], path: Path) -> dict:
+    """A registry node must be a mapping with only known keys — typos fail loudly."""
+    if not isinstance(value, dict):
+        raise TaxonomyError(f"{path}: {what} must be a mapping, got {value!r}")
+    unknown = set(value) - allowed
+    if unknown:
+        raise TaxonomyError(
+            f"{path}: unknown key(s) on {what}: {', '.join(sorted(unknown))} "
+            f"— allowed: {', '.join(sorted(allowed))}"
+        )
+    return value
 
 
 def _lint(taxonomy: Taxonomy, path: Path) -> None:
