@@ -24,3 +24,20 @@ def strip_html(fragment: str) -> str:
     """Flatten a server-rendered bibliography fragment to terminal text."""
     text = _TAG_RE.sub("", fragment)
     return html.unescape(text).strip()
+
+
+def render_table(columns: list[str], rows: list[tuple]) -> list[str]:
+    """Space-aligned text table: header, rule, rows."""
+    cells = [[str(value) for value in row] for row in rows]
+    widths = [
+        max(len(name), *(len(row[i]) for row in cells)) if cells else len(name)
+        for i, name in enumerate(columns)
+    ]
+    lines = [
+        "  ".join(name.ljust(widths[i]) for i, name in enumerate(columns)).rstrip(),
+        "  ".join("-" * width for width in widths),
+    ]
+    lines += [
+        "  ".join(row[i].ljust(widths[i]) for i in range(len(columns))).rstrip() for row in cells
+    ]
+    return lines

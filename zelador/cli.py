@@ -11,9 +11,10 @@ import typer
 
 from zelador import backup as backup_mod
 from zelador import config
+from zelador import local as local_mod
 from zelador import status as status_mod
 from zelador.client import ZoteroClient, ZoteroError
-from zelador.output import emit_ndjson, note, strip_html
+from zelador.output import emit_ndjson, note, render_table, strip_html
 
 app = typer.Typer(
     help="Caretaker for a personal Zotero library. The agent proposes; you approve.",
@@ -206,6 +207,41 @@ def collections(
             return
         for line in render_collection_tree(found):
             print(line)
+
+
+@app.command(rich_help_panel="Library")
+def local(
+    sql: Annotated[str, typer.Argument(help="A single read-only SQL statement.")],
+    as_json: Annotated[
+        bool, typer.Option("--json", help="NDJSON, one row object per line.")
+    ] = False,
+):
+    """Read-only analytics: raw SQL against a fresh snapshot of Zotero's SQLite.
+
+    Every run recopies the live database (with -wal/-journal siblings) and
+    gates on PRAGMA integrity_check before answering.
+
+    Examples:
+        zel local "SELECT COUNT(*) FROM items"
+        zel local "SELECT * FROM itemAnnotations LIMIT 5" --json
+    """
+    with guard():
+        cfg = config.load_config()
+        zotero_dir = config.discover_zotero_dir(override=cfg.zotero_data_dir)
+        snapshot_dir = config.ensure_dir("cache") / "local-snapshot"
+        try:
+            db = local_mod.snapshot_database(zotero_dir, snapshot_dir)
+            columns, rows = local_mod.query(db, sql)
+        except local_mod.LocalError as exc:
+            note(f"error: {exc}")
+            raise typer.Exit(1) from None
+        if as_json:
+            for row in rows:
+                emit_ndjson(dict(zip(columns, row, strict=True)))
+            return
+        for line in render_table(columns, rows):
+            print(line)
+        note(f"{len(rows)} row(s)")
 
 
 def render_collection_tree(collections: list) -> list[str]:

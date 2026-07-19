@@ -25,6 +25,7 @@ Command surface lands milestone by milestone; the table below tracks what exists
 | `zel items [keys...]`    | Full paginated dump, or batch read; `--since`, `--json`, `--bib`      |
 | `zel tags`               | Tag list with item counts and manual/auto type; `--json`              |
 | `zel collections`        | Collection tree; `--json`                                             |
+| `zel local <sql>`        | Read-only SQL over a fresh, integrity-checked SQLite snapshot         |
 | `zel backup`             | Full-library JSONL snapshot (items incl. trash, collections, colours) |
 | `zel debug whoami`       | Identity and access of the configured API key                         |
 | `zel debug paths`        | Resolved paths: data dir, config files, Zotero data dir               |
