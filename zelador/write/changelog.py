@@ -1,0 +1,87 @@
+"""The log.v1 write-ahead change log — layer 2 of the safety model.
+
+Append-only JSONL: a header line, then entry lines. Every operation gets a
+`pending` entry (carrying its full operation record, old state included)
+before the write request goes out, and a resolution line after — so a crash
+mid-apply never loses the undo record. The reader folds last-status-wins.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass
+class LogEntry:
+    operation: dict  # the plan operation record, as written with the pending line
+    status: str  # pending | applied | unchanged | failed | undone
+    version: int | None  # resulting object version, set by resolutions
+
+
+class SessionLog:
+    """Appending writer for one apply session; every line is flushed on write."""
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def start(self, plan: str, backup: str, timestamp: str) -> None:
+        self._append(
+            {
+                "kind": "header",
+                "schema": "log.v1",
+                "plan": plan,
+                "backup": backup,
+                "timestamp": timestamp,
+            }
+        )
+
+    def pending(self, operations: list[dict]) -> None:
+        for operation in operations:
+            self._append(
+                {
+                    "kind": "entry",
+                    "op": operation["id"],
+                    "status": "pending",
+                    "operation": operation,
+                }
+            )
+
+    def resolve(self, op_id: str, status: str, version: int | None = None) -> None:
+        line: dict = {"kind": "entry", "op": op_id, "status": status}
+        if version is not None:
+            line["version"] = version
+        self._append(line)
+
+    def _append(self, line: dict) -> None:
+        with self.path.open("a") as handle:
+            handle.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def read_log(path: Path) -> tuple[dict, dict[str, LogEntry]]:
+    """Header plus entries folded last-status-wins, in first-pending order."""
+    header: dict = {}
+    entries: dict[str, LogEntry] = {}
+    with path.open() as handle:
+        for raw in handle:
+            if not raw.strip():
+                continue
+            line = json.loads(raw)
+            if line["kind"] == "header":
+                header = line
+            elif line["op"] in entries:
+                entry = entries[line["op"]]
+                entry.status = line["status"]
+                entry.version = line.get("version", entry.version)
+            else:
+                entries[line["op"]] = LogEntry(
+                    operation=line["operation"], status=line["status"], version=line.get("version")
+                )
+    return header, entries
+
+
+def unresolved_ops(path: Path) -> list[str]:
+    """Operation ids whose last status is still `pending` — a crashed apply's residue."""
+    _, entries = read_log(path)
+    return [op_id for op_id, entry in entries.items() if entry.status == "pending"]
