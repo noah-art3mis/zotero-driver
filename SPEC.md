@@ -29,10 +29,12 @@ This is a prototype, not a product. Optimize for conciseness, understandability,
 
 ## Taxonomy
 
-Flat tags, controlled by a registry file (`taxonomy.yaml`) — not namespaced tags. The registry declares canonical tags, their meaning, and known aliases; the validator only permits tags listed there. The tags themselves stay human.
+Namespaced tags of the form `family:value` (lowercase, hyphens for compound values), controlled by a registry file (`taxonomy.yaml`). The registry declares the allowed families, each family's canonical tags, their meaning, known aliases, and optional colours; the validator only permits tags listed there.
 
-- Existing status vocabulary is kept as-is: `lido` (read), `ler` (to read), `fav`, `_tablet`.
-- The ~1,200 auto-imported subject tags (arXiv categories, newspaper sections, publisher keywords) are slated for rewrite against the registry, in approved batches. The registry itself is designed from real audit data (M2), not invented up front.
+- Initial families: `status:` (workflow state), `topic:` (subject vocabulary), `device:` (workflow markers). Further families (`method:`, `use:`, ...) are added only if the M2 audit shows a real need – the family list lives in the registry, not in code.
+- Existing status vocabulary migrates into the scheme keeping its Portuguese values: `ler` → `status:ler`, `lido` → `status:lido`, `fav` → `status:fav`, `_tablet` → `device:tablet`.
+- Colours: a registry entry may declare a colour (hex) and position. `zel apply` syncs declared colours to Zotero's coloured-tags library setting (`tagColors`, via the Web API settings endpoint, same version-safety rules as item writes). The validator enforces Zotero's hard cap of 9 coloured tags; colours are reserved for the `status:`/`device:` families so they stay pinned atop the tag selector.
+- The ~1,200 auto-imported subject tags (arXiv categories, newspaper sections, publisher keywords) are slated for rewrite against the registry as `topic:` tags, in approved batches. The registry itself is designed from real audit data (M2), not invented up front.
 - User should disable Zotero's "Automatically tag items with keywords and subject headings" setting so the mess stops growing.
 
 ## Safety model (three layers)
