@@ -83,13 +83,23 @@ class TestZoteroDirDiscovery:
 
     def test_home_zotero_on_linux(self, tmp_path, monkeypatch):
         (tmp_path / "Zotero").mkdir()
+        (tmp_path / "Zotero" / "zotero.sqlite").touch()
         monkeypatch.setattr(config.Path, "home", staticmethod(lambda: tmp_path))
         assert config.discover_zotero_dir(wsl=False) == tmp_path / "Zotero"
 
     def test_wsl_scans_mounted_profiles(self, tmp_path, monkeypatch):
         users = tmp_path / "mnt" / "c" / "Users"
         (users / "noah_" / "Zotero").mkdir(parents=True)
+        (users / "noah_" / "Zotero" / "zotero.sqlite").touch()
         (users / "Public").mkdir()
+        monkeypatch.setattr(config, "WINDOWS_USERS_ROOT", users)
+        assert config.discover_zotero_dir(wsl=True) == users / "noah_" / "Zotero"
+
+    def test_wsl_skips_profiles_without_a_database(self, tmp_path, monkeypatch):
+        users = tmp_path / "mnt" / "c" / "Users"
+        (users / "All Users" / "Zotero").mkdir(parents=True)  # junction, no database
+        (users / "noah_" / "Zotero").mkdir(parents=True)
+        (users / "noah_" / "Zotero" / "zotero.sqlite").touch()
         monkeypatch.setattr(config, "WINDOWS_USERS_ROOT", users)
         assert config.discover_zotero_dir(wsl=True) == users / "noah_" / "Zotero"
 
