@@ -21,9 +21,9 @@ This is a prototype, not a product. Optimize for conciseness, understandability,
 | Area        | Decision                                                                                                                                                                                                        |
 |-------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Read path   | Zotero Web API (v3) is canonical for reads and writes. The local SQLite replica is a secondary, explicitly-named path (`zel local ...`) for bulk analytics and direct PDF file access only. Always read from a snapshot copy, never the live file. The Zotero data directory is auto-discovered per platform (`~/Zotero` on Linux/macOS, `%USERPROFILE%\Zotero` on Windows, mounted Windows profile under WSL — here `/mnt/c/Users/noah_/Zotero`), overridable in config |
-| Write path  | Web API only, with `If-Unmodified-Since-Version` / per-object `version` concurrency safety. Never write to SQLite                                                                                                    |
+| Write path  | Web API only; never write to SQLite. Batch item writes carry each item's `data.version` (per-object conflicts arrive in the response's `failed` map) and no library-level `If-Unmodified-Since-Version` — a library-wide header would let any unrelated change 412 the whole batch. The library-level header is used only on endpoints that require it (e.g. tag deletion), which fail whole-operation |
 | HTTP client | Hand-rolled thin client on `httpx` (~350 lines), not pyzotero. Rationale: pyzotero's `_batch_update` discards per-object failure maps and its 429 handling returns success without retrying — both sit on our critical path. Crib pyzotero's `_client.py` version-header conventions and test suite as reference. Revisit adoption if scope grows to attachments/file uploads |
-| Client musts | Paginated full-library dump following `Link: next` headers; batch writes chunked at 50 parsing the per-object `success`/`unchanged`/`failed` response maps; honor `Backoff`/`Retry-After` including on 200s, with real retry of 429'd requests; surface 412 version conflicts per item key |
+| Client musts | Paginated full-library dump following `Link: next` headers; batch writes chunked at 50 parsing the per-object `success`/`unchanged`/`failed` response maps; honor `Backoff`/`Retry-After` including on 200s, with real retry of 429'd requests; surface version conflicts per item key; endpoint builder constructs `/users/<ZOTERO_USER_ID>/` paths only — group libraries are unreachable by construction, and setup verifies the key's identity and write access via `/keys/current` |
 | Auth        | `.env` at repo root: `ZOTERO_API_KEY`, `ZOTERO_USER_ID=11868292`. Never read into agent context; consumed by the CLI process only                                                                                     |
 | Stack       | Python via `uv`; TDD against a mocked httpx transport                                                                                                                                                               |
 
@@ -37,10 +37,26 @@ Namespaced tags of the form `family:value` (lowercase, hyphens for compound valu
 - The ~1,200 auto-imported subject tags (arXiv categories, newspaper sections, publisher keywords) are slated for rewrite against the registry as `topic:` tags, in approved batches. The registry itself is designed from real audit data (M2), not invented up front.
 - User should disable Zotero's "Automatically tag items with keywords and subject headings" setting so the mess stops growing.
 
+Registry shape (`taxonomy.yaml`), kept minimal:
+
+```yaml
+families:
+  status: {description: workflow state, coloured: true}
+  topic:  {description: subject vocabulary}
+  device: {description: workflow markers, coloured: true}
+tags:
+  - tag: status:lido
+    description: read
+    aliases: [lido]
+    colour: "#2DA608"    # optional; position = order within coloured tags
+```
+
+Aliases are valid as selectors in changeset intents (so `merge_tag` can name what it replaces) but never as proposed output — the validator only ever writes canonical tags.
+
 ## Safety model (three layers)
 
-1. **Pre-session snapshot** — `zel backup` dumps every item's full JSON to `<data dir>/backups/<timestamp>.jsonl`. `zel apply` refuses to run without a snapshot from the current day. This is the undo source: Zotero's server keeps no history — item deletions go to a restorable trash, but tag removals and field overwrites are unrecoverable server-side.
-2. **Append-only change log** — every mutation appends `(item key, field, old, new, item version)` to a session JSONL. `zel undo <session>` replays it backwards.
+1. **Pre-session snapshot** — `zel backup` dumps every item's full JSON, including trashed items (`includeTrashed=1`), to `<data dir>/backups/<timestamp>.jsonl`. Each expanded plan records the backup it was validated against plus the library version at validation; `zel apply` requires that exact backup, not merely a recent one. This is the undo source: Zotero's server keeps no history — item deletions go to a restorable trash, but tag removals and field overwrites are unrecoverable server-side.
+2. **Write-ahead change log** — before each write request, the session log gets a `pending` entry per operation carrying the old state; after the response, each entry is marked `applied`, `unchanged`, or `failed` from the per-object result maps, with the new version. A crash mid-apply therefore never loses the undo record. `zel apply` refuses to start while a session has unresolved `pending` entries. `zel undo <session>` replays only `applied` entries backwards, and before reversing each one verifies the item's current state still equals the logged new state — anything else is reported as an undo conflict and left untouched.
 3. **Validator hard rules** — no item deletions ever (the agent may only propose trashing, never purge); changesets touching >200 items refuse to apply without an explicit `--big` flag; writes only to fields the changeset schema allows.
 
 Free fourth layer: the local Windows SQLite replica is itself a full copy sync could restore from.
@@ -75,7 +91,7 @@ Committed: code, `SPEC.md`, `taxonomy.yaml` (the registry is public — acceptab
 
 Emits one JSON file per check under `<data dir>/audit/` (machine-readable, diffable between runs) plus a generated `audit-report.md` summary.
 
-1. **Metadata completeness** — per item, missing DOI / date / creators / publication, scored by item type (a webpage legitimately lacks a DOI; a journal article doesn't). Judged against citation needs, not completionism. Includes standalone attachments: PDFs with no parent item, invisible to bibliographies.
+1. **Metadata completeness** — per item, missing DOI / date / creators / publication, scored by item type (a webpage legitimately lacks a DOI; a journal article doesn't). Judged against citation needs, not completionism. The rules live as one data table in code, keyed by Zotero `itemType`: which fields are required, and which field counts as the "publication" (`publicationTitle`, `bookTitle`, `conferenceName`, `publisher`, ...). Includes standalone attachments: PDFs with no parent item, invisible to bibliographies.
 2. **Tag mess** — cluster near-duplicates and case-duplicates (`Artificial Intelligence` / `artificial intelligence` / `AI`, four casings of `machine learning`), separate automatic from manual tags (the API marks tag type).
 3. **Collection hygiene** — items in no collection, empty collections, duplicate sibling names (two `Clickbait` under Detection), orphaned subtrees.
 4. **Duplicate items** — same DOI or near-identical title+year.
@@ -109,7 +125,7 @@ House style distilled from `judex-mini` and `adapta` (the reference designs): hu
 | `zel audit [check]`                         | Run all audit checks or one; writes JSON per check + `audit-report.md` to the data dir             |
 | `zel backup`                                | Full-library JSONL snapshot to the data dir                                                        |
 | `zel validate <changeset>`                  | Check symbolic intents against `taxonomy.yaml` + hard rules; expand into a version-pinned per-item plan |
-| `zel apply <plan>`                          | Execute an expanded plan; `--dry-run` first-class; refuses without a same-day backup; `--big` for >200 items |
+| `zel apply <plan>`                          | Execute an expanded plan; `--dry-run` first-class; refuses unless the plan's pinned backup exists; `--big` for >200 items |
 | `zel undo <session>`                        | Replay a session's change log backwards                                                            |
 | `zel lookup crossref\|arxiv`                | Deterministic enrichment lookups by DOI/id/fuzzy title, cached, candidates with scores             |
 | `zel pdf-meta <key>`                        | First-page text extraction from the local PDF for metadata recovery                                |
@@ -119,6 +135,10 @@ House style distilled from `judex-mini` and `adapta` (the reference designs): hu
 ## Changesets
 
 Changesets are **symbolic intents**, not expanded edits: a closed operation vocabulary — `merge_tag`, `add_tag`, `remove_tag`, `fill_field`, `add_to_collection`, `remove_from_collection`, `create_note`, `trash_item` (propose-only) — defined by a schema in the repo and grown only by editing that schema. `zel validate` expands intents against the live library into an exact per-item plan pinned to item versions; the expanded plan is what the user approves and what `zel apply` executes. Version pins make stale plans fail loudly per item instead of drifting silently.
+
+**Expansion semantics.** Zotero treats `tags` and `collections` as complete arrays — a partial write silently removes whatever it omits. So every tag/collection operation expands by read-modify-write of the full array, and the plan records both old and new arrays per item. `merge_tag` rewrites each carrying item's tag array (add canonical, drop aliases, preserve everything else); the alias tag may only be deleted globally after validation confirms no item still carries it. `create_note` operations carry a precomputed client-generated object key, so a retried request cannot create a duplicate and undo always knows the key.
+
+**Contracts.** Three versioned JSON shapes, defined once as dataclasses + schema in the repo: `changeset.v1` (the intents), `plan.v1` (per-item operations, each with an operation id, item key, pinned item version, old state, new state, risk tier, and the backup id it binds to), and `log.v1` (operation id → pending/applied/unchanged/failed + resulting version). Approval in chat is per intent group; the plan file is what apply executes, byte-for-byte.
 
 Enrichment logic is CLI-side (deterministic, cached, fixture-tested) — the agent's role is judgment: deciding whether a lookup candidate truly matches an item and emitting `fill_field` intents.
 
@@ -136,18 +156,19 @@ Skills encode the safety flow so it is followed by construction, not memory.
 
 ## Milestones
 
-| #   | Milestone                                                                                                     |
-|-----|-----------------------------------------------------------------------------------------------------------------|
-| M1  | Read client + `zel audit` — tags, metadata, collections, duplicates → JSON + report                              |
-| M2  | Taxonomy registry (`taxonomy.yaml`) designed together from M1 audit data                                          |
-| M3a | Shakedown write: merge obvious case-duplicate tags only — smallest reversible job, exercises changeset/apply/undo |
-| M3b | Metadata enrichment (the stated pain: bibliographies)                                                             |
-| M4  | Full tag rewrite against the registry (~1,500 tags → curated vocabulary)                                          |
-| M5  | Collections restructure — last, because the tree is load-bearing for CAPSTONE and this is a taxonomy conversation |
+| #   | Milestone                                                                                                        |
+|-----|---------------------------------------------------------------------------------------------------------------------|
+| M1  | Read client + `zel backup` (incl. trash) + `zel audit` — tags, metadata, collections, duplicates → JSON + report     |
+| M2  | Taxonomy registry (`taxonomy.yaml`) designed together from M1 audit data                                             |
+| M3a | Write machinery — contracts, `zel validate` expansion, `zel apply`, `zel undo` — TDD against mocked transport and golden plan fixtures; no live writes |
+| M3b | Live shakedown: merge obvious case-duplicate tags on a handful of items, then an undo drill — smallest reversible job |
+| M3c | Metadata enrichment (the stated pain: bibliographies)                                                                |
+| M4  | Full tag rewrite against the registry (~1,500 tags → curated vocabulary)                                             |
+| M5  | Collections restructure — last, because the tree is load-bearing for CAPSTONE and this is a taxonomy conversation    |
 
 ## Process
 
-git init first (not yet a repo), then branch → TDD → `/review` → merge per user workflow. `uv` for everything. Semantic commits.
+Branch → TDD → `/review` → merge. `uv` for everything. Semantic commits.
 
 ## Library facts (as of 2026-07-19 audit snapshot)
 
