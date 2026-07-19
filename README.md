@@ -21,9 +21,11 @@ Command surface lands milestone by milestone; the table below tracks what exists
 
 | Command                  | What it does                                                          |
 | ------------------------ | --------------------------------------------------------------------- |
+| `zel status`             | One-screen session orientation; the sessions' mandatory opener        |
 | `zel items [keys...]`    | Full paginated dump, or batch read; `--since`, `--json`, `--bib`      |
 | `zel tags`               | Tag list with item counts and manual/auto type; `--json`              |
 | `zel collections`        | Collection tree; `--json`                                             |
+| `zel backup`             | Full-library JSONL snapshot (items incl. trash, collections, colours) |
 | `zel debug whoami`       | Identity and access of the configured API key                         |
 | `zel debug paths`        | Resolved paths: data dir, config files, Zotero data dir               |
 | `zel debug probe <path>` | Raw GET of a user-scoped API path, pretty-printed                     |

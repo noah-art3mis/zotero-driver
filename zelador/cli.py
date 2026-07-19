@@ -9,7 +9,9 @@ from typing import Annotated
 
 import typer
 
+from zelador import backup as backup_mod
 from zelador import config
+from zelador import status as status_mod
 from zelador.client import ZoteroClient, ZoteroError
 from zelador.output import emit_ndjson, note, strip_html
 
@@ -49,6 +51,81 @@ def guard():
 
 
 # -- Library ---------------------------------------------------------------
+
+
+@app.command(rich_help_panel="Library")
+def status(
+    as_json: Annotated[bool, typer.Option("--json", help="One status object.")] = False,
+):
+    """One-screen session orientation — the skills' mandatory opener.
+
+    Live library version, last backup and its counts, unresolved session
+    logs, latest audit stamp, and config presence. The API being down is
+    reported, not fatal: the local half still prints.
+
+    Examples:
+        zel status
+        zel status --json | jq .backup.library_version
+    """
+    with guard():
+        cfg = config.load_config()
+        result = status_mod.local_status(
+            config.ensure_dir("backups"), config.ensure_dir("log"), config.ensure_dir("audit"), cfg
+        )
+        try:
+            result["api"] = {"library_version": make_client().library_version(), "error": None}
+        except (ZoteroError, config.ConfigError) as exc:
+            result["api"] = {"library_version": None, "error": str(exc)}
+        if as_json:
+            emit_ndjson(result)
+            return
+        for line in status_mod.render_status(result):
+            print(line)
+
+
+# -- Change loop -----------------------------------------------------------
+
+
+@app.command(rich_help_panel="Change loop")
+def backup(
+    as_json: Annotated[bool, typer.Option("--json", help="Final outcome object.")] = False,
+):
+    """Full-library JSONL snapshot (items incl. trash, collections, tagColors).
+
+    A verified no-op when the library hasn't changed since the last backup.
+
+    Examples:
+        zel backup
+        zel backup --json | jq .noop
+    """
+    with guard():
+        backups_dir = config.ensure_dir("backups")
+        client = make_client()
+        path = backup_mod.run_backup(client, backups_dir)
+        if path is None:
+            info = backup_mod.latest_backup(backups_dir)
+            note(f"library unchanged since backup {info.timestamp} — nothing to do")
+            if as_json:
+                emit_ndjson({"noop": True, "library_version": info.library_version})
+            return
+        stats = backup_mod.backup_stats(path)
+        version = backup_mod.latest_backup(backups_dir).library_version
+        if as_json:
+            emit_ndjson(
+                {
+                    "noop": False,
+                    "path": str(path),
+                    "library_version": version,
+                    "items": stats.items,
+                    "collections": stats.collections,
+                    "tags": stats.tags,
+                }
+            )
+        else:
+            print(
+                f"wrote {path} — version {version}, {stats.items} items, "
+                f"{stats.collections} collections, {stats.tags} tags"
+            )
 
 
 @app.command(rich_help_panel="Library")
