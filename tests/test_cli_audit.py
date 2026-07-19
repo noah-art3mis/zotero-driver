@@ -6,7 +6,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tests.conftest import FakeZotero, make_item, make_tag
-from zelador import cli
+from zelador import cli, config
 from zelador.client import ZoteroClient
 from zelador.config import Credentials
 
@@ -57,3 +57,24 @@ class TestAuditCommand:
         result = runner.invoke(cli.app, ["audit", "--since", "41", "--json"])
         summary = json.loads(result.stdout.strip())
         assert summary["counts"]["tags"] == 0  # keyless tag clusters drop out when scoped
+
+    def test_registry_check_included_when_taxonomy_present(self, fake, monkeypatch, tmp_path):
+        registry = tmp_path / "taxonomy.yaml"
+        registry.write_text("families:\n  status: {}\ntags:\n  - tag: status:read\n")
+        monkeypatch.setattr(config, "TAXONOMY_FILE", registry)
+        result = runner.invoke(cli.app, ["audit", "--json"])
+        summary = json.loads(result.stdout.strip())
+        assert summary["counts"]["registry"] > 0  # AI/ai tags are unregistered
+
+    def test_registry_check_without_taxonomy_is_bad_input(self, fake):
+        result = runner.invoke(cli.app, ["audit", "registry"])
+        assert result.exit_code == 2
+
+    def test_broken_registry_is_operational_failure(self, fake, monkeypatch, tmp_path):
+        registry = tmp_path / "taxonomy.yaml"
+        registry.write_text(
+            "families:\n  status: {}\ntags:\n  - tag: status:read\n    colour: '#123456'\n"
+        )
+        monkeypatch.setattr(config, "TAXONOMY_FILE", registry)
+        result = runner.invoke(cli.app, ["audit"])
+        assert result.exit_code == 1

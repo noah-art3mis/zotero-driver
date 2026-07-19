@@ -13,6 +13,7 @@ from zelador import backup as backup_mod
 from zelador import config
 from zelador import local as local_mod
 from zelador import status as status_mod
+from zelador import taxonomy as taxonomy_mod
 from zelador.audit import runner as audit_runner
 from zelador.client import ZoteroClient, ZoteroError
 from zelador.output import emit_ndjson, note, render_table, strip_html
@@ -92,7 +93,9 @@ def status(
 def audit(
     check: Annotated[
         str | None,
-        typer.Argument(help="Run one check: completeness, tags, collections, duplicates."),
+        typer.Argument(
+            help="Run one check: completeness, tags, collections, duplicates, registry."
+        ),
     ] = None,
     since: Annotated[
         int | None, typer.Option(help="Scope findings to items changed after this library version.")
@@ -101,6 +104,8 @@ def audit(
 ):
     """Run all audit checks (or one); write JSON per check + audit-report.md.
 
+    The registry check runs only when taxonomy.yaml exists.
+
     Examples:
         zel audit
         zel audit tags
@@ -108,10 +113,20 @@ def audit(
     """
     with guard():
         cfg = config.load_config()
+        registry = (
+            taxonomy_mod.load_taxonomy(config.TAXONOMY_FILE)
+            if config.TAXONOMY_FILE.exists()
+            else None
+        )
         client = make_client()
         try:
             summary = audit_runner.run_audit(
-                client, config.ensure_dir("audit"), check=check, since=since, style=cfg.style
+                client,
+                config.ensure_dir("audit"),
+                check=check,
+                since=since,
+                style=cfg.style,
+                taxonomy=registry,
             )
         except audit_runner.UnknownCheck as exc:
             raise typer.BadParameter(str(exc)) from None
