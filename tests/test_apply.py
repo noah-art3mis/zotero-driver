@@ -227,6 +227,19 @@ class TestVerification:
         outcome = run_apply(make_plan(ops), client_for(fake), backups, log, now=NOW)
         assert outcome.verified is True and outcome.mismatches == []
 
+    def test_server_reordered_tags_still_verify(self, dirs):
+        # Zotero stores tags sorted; expand appends. The live list comes back
+        # in a different order than the composed write — that is not a mismatch.
+        backups, log = dirs
+        fake = FakeZotero(
+            items=[make_item("AAAA1111", version=1, tags=[{"tag": "zebra", "type": 1}])],
+            library_version=100,
+        )
+        ops = [make_op(facet="tags", old=[{"tag": "zebra", "type": 1}],
+                       new=[{"tag": "zebra", "type": 1}, {"tag": "t:x", "type": 0}])]
+        outcome = run_apply(make_plan(ops), client_for(fake), backups, log, now=NOW)
+        assert outcome.verified is True and outcome.mismatches == []
+
     def test_lying_success_is_caught(self, dirs):
         backups, log = dirs
         fake = FakeZotero(items=[make_item("AAAA1111", version=1)], library_version=100)

@@ -198,12 +198,16 @@ class FakeZotero:
 
     @staticmethod
     def _server_form(data: dict) -> dict:
-        """Zotero serializes manual tags without their default type (matches live API)."""
+        """Zotero stores tags sorted and serializes manual tags without their
+        default type (matches the live API)."""
         if "tags" in data:
-            data["tags"] = [
-                {k: v for k, v in t.items() if not (k == "type" and v == 0)}
-                for t in data["tags"]
-            ]
+            data["tags"] = sorted(
+                (
+                    {k: v for k, v in t.items() if not (k == "type" and v == 0)}
+                    for t in data["tags"]
+                ),
+                key=lambda t: t["tag"],
+            )
         return data
 
     def _write_setting(self, request: httpx.Request, name: str) -> httpx.Response:
