@@ -1,0 +1,18 @@
+# Copy to config.yaml and edit. All keys optional.
+
+# Zotero data directory (holds zotero.sqlite and storage/).
+# Unset, zelador auto-discovers it per platform:
+#   Linux/macOS  ~/Zotero
+#   WSL          /mnt/c/Users/<you>/Zotero
+# zotero_data_dir: /mnt/c/Users/you/Zotero
+
+# Where your writing references items by citekey: .bib files are parsed for
+# entry keys; anything else is a glob scanned for [[@citekey]] wiki-links,
+# \cite{...} commands, and @citekey.md basenames. Unset, citekey protection
+# and the citekey audit are inert.
+# citekey_sources:
+#   - /path/to/vault/zotero_library.bib
+#   - /path/to/vault/**/*.md
+
+# CSL style for bibliography rendering (zel items --bib, audit rendered entries).
+# style: apa

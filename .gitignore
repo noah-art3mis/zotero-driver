@@ -1,6 +1,11 @@
 # secrets — never commit, never read into agent context
 .env
 .env.*
+!.env.example
+
+# personal config — the committed *.example.yaml files are the templates
+config.yaml
+taxonomy.yaml
 
 # personal library data (canonical location is ~/.local/share/zelador/,
 # but keep this net in case anything lands here)

@@ -1,0 +1,93 @@
+"""Tests for zelador.config — env credentials, data dir, config.yaml, Zotero dir discovery."""
+
+import pytest
+
+from zelador import config
+
+
+class TestCredentials:
+    def test_reads_key_and_user_id_from_env(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ZOTERO_API_KEY", "sekrit")
+        monkeypatch.setenv("ZOTERO_USER_ID", "12345")
+        creds = config.load_credentials(dotenv_path=tmp_path / ".env")
+        assert creds.api_key == "sekrit"
+        assert creds.user_id == "12345"
+
+    def test_missing_key_fails_loudly(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("ZOTERO_API_KEY", raising=False)
+        monkeypatch.setenv("ZOTERO_USER_ID", "12345")
+        with pytest.raises(config.ConfigError, match="ZOTERO_API_KEY"):
+            config.load_credentials(dotenv_path=tmp_path / ".env")
+
+    def test_missing_user_id_fails_loudly(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ZOTERO_API_KEY", "sekrit")
+        monkeypatch.delenv("ZOTERO_USER_ID", raising=False)
+        with pytest.raises(config.ConfigError, match="ZOTERO_USER_ID"):
+            config.load_credentials(dotenv_path=tmp_path / ".env")
+
+
+class TestDataDir:
+    def test_env_override_wins(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ZELADOR_DATA_DIR", str(tmp_path / "custom"))
+        assert config.data_dir() == tmp_path / "custom"
+
+    def test_defaults_to_platformdirs(self, monkeypatch):
+        monkeypatch.delenv("ZELADOR_DATA_DIR", raising=False)
+        path = config.data_dir()
+        assert path.name == "zelador"
+
+    def test_subdirs_created_on_demand(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("ZELADOR_DATA_DIR", str(tmp_path / "d"))
+        backups = config.ensure_dir("backups")
+        assert backups.is_dir()
+        assert backups == tmp_path / "d" / "backups"
+
+
+class TestConfigFile:
+    def test_defaults_when_file_absent(self, tmp_path):
+        cfg = config.load_config(tmp_path / "config.yaml")
+        assert cfg.style == "apa"
+        assert cfg.zotero_data_dir is None
+        assert cfg.citekey_sources == []
+
+    def test_reads_all_three_keys(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text(
+            "zotero_data_dir: /mnt/c/Users/x/Zotero\n"
+            "citekey_sources: [refs.bib, 'notes/**/*.md']\n"
+            "style: chicago-note-bibliography\n"
+        )
+        cfg = config.load_config(f)
+        assert str(cfg.zotero_data_dir) == "/mnt/c/Users/x/Zotero"
+        assert cfg.citekey_sources == ["refs.bib", "notes/**/*.md"]
+        assert cfg.style == "chicago-note-bibliography"
+
+    def test_unknown_key_fails_loudly(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text("zotero_dir: /wrong\n")
+        with pytest.raises(config.ConfigError, match="zotero_dir"):
+            config.load_config(f)
+
+
+class TestZoteroDirDiscovery:
+    def test_config_override_wins(self, tmp_path):
+        override = tmp_path / "MyZotero"
+        override.mkdir()
+        assert config.discover_zotero_dir(override=override) == override
+
+    def test_home_zotero_on_linux(self, tmp_path, monkeypatch):
+        (tmp_path / "Zotero").mkdir()
+        monkeypatch.setattr(config.Path, "home", staticmethod(lambda: tmp_path))
+        assert config.discover_zotero_dir(wsl=False) == tmp_path / "Zotero"
+
+    def test_wsl_scans_mounted_profiles(self, tmp_path, monkeypatch):
+        users = tmp_path / "mnt" / "c" / "Users"
+        (users / "noah_" / "Zotero").mkdir(parents=True)
+        (users / "Public").mkdir()
+        monkeypatch.setattr(config, "WINDOWS_USERS_ROOT", users)
+        assert config.discover_zotero_dir(wsl=True) == users / "noah_" / "Zotero"
+
+    def test_not_found_fails_loudly(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(config.Path, "home", staticmethod(lambda: tmp_path))
+        with pytest.raises(config.ConfigError, match="[Zz]otero"):
+            config.discover_zotero_dir(wsl=False)
