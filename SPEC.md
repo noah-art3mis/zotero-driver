@@ -12,6 +12,10 @@ Explicitly out of scope: building another citation manager, writing to Zotero's 
 
 The agent proposes; deterministic code validates; the user approves; every applied change is logged and reversible. Writes either succeed verifiably or fail loudly.
 
+## Prototype posture
+
+This is a prototype, not a product. Optimize for conciseness, understandability, clean architecture, and simplicity — in that spirit, not for bulletproofness. Concretely: no defensive guards against states the design already makes impossible, no retry/fallback layers beyond what the spec names (429 retry, version pins), no configurability beyond what a real session needs, no premature abstraction. Small files, pure functions, obvious names. The safety model above is the one place rigor is non-negotiable — everything else should be the simplest code that reads well. When bulletproofing and simplicity conflict outside the safety model, choose simplicity.
+
 ## Architecture decisions
 
 | Area        | Decision                                                                                                                                                                                                        |
