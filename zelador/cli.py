@@ -13,6 +13,7 @@ from zelador import backup as backup_mod
 from zelador import config
 from zelador import local as local_mod
 from zelador import status as status_mod
+from zelador.audit import runner as audit_runner
 from zelador.client import ZoteroClient, ZoteroError
 from zelador.output import emit_ndjson, note, render_table, strip_html
 
@@ -82,6 +83,44 @@ def status(
             return
         for line in status_mod.render_status(result):
             print(line)
+
+
+# -- Findings --------------------------------------------------------------
+
+
+@app.command(rich_help_panel="Findings")
+def audit(
+    check: Annotated[
+        str | None,
+        typer.Argument(help="Run one check: completeness, tags, collections, duplicates."),
+    ] = None,
+    since: Annotated[
+        int | None, typer.Option(help="Scope findings to items changed after this library version.")
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Summary object.")] = False,
+):
+    """Run all audit checks (or one); write JSON per check + audit-report.md.
+
+    Examples:
+        zel audit
+        zel audit tags
+        zel audit --since 3400 --json
+    """
+    with guard():
+        cfg = config.load_config()
+        client = make_client()
+        try:
+            summary = audit_runner.run_audit(
+                client, config.ensure_dir("audit"), check=check, since=since, style=cfg.style
+            )
+        except audit_runner.UnknownCheck as exc:
+            raise typer.BadParameter(str(exc)) from None
+        if as_json:
+            emit_ndjson(summary)
+            return
+        for name, count in summary["counts"].items():
+            print(f"{count:>6}  {name}")
+        print(f"report: {summary['report']}")
 
 
 # -- Change loop -----------------------------------------------------------
