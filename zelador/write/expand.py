@@ -43,9 +43,11 @@ def expand(
     """Expand a changeset against the live library; raises ValidationError on any failure."""
     items = client.all_items()
     collections = client.all_collections()
-    tag_colors = client.setting("tagColors")
+    # Captured before the settings GET — a single-object request whose header
+    # carries the setting's own version, not the library version.
     library_version = client.last_modified_version
     assert library_version is not None
+    tag_colors = client.setting("tagColors")
     expander = _Expander(client, items, collections, taxonomy, keygen or _generate_key)
     for group, intent in enumerate(changeset.intents):
         expander.expand_intent(group, intent)

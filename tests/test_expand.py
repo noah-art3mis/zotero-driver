@@ -72,6 +72,17 @@ class TestPlanHeader:
         assert plan.library_version == 123
         assert plan.intents[0]["op"] == "add_tag"
 
+    def test_settings_read_does_not_clobber_library_version(self):
+        # The tagColors GET is a single-object request whose header carries the
+        # setting's own (older) version — the plan must pin the library version.
+        plan = run_expand(
+            [{"op": "add_tag", "tag": "topic:ai", "keys": ["AAAA1111"]}],
+            items=[make_item("AAAA1111")],
+            settings={"tagColors": {"value": [], "version": 40}},
+            library_version=123,
+        )
+        assert plan.library_version == 123
+
 
 class TestMergeTag:
     def test_rewrites_each_carrying_item(self):
