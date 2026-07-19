@@ -1,0 +1,96 @@
+"""Session orientation: the local half of `zel status` (backup, logs, audit, config)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from zelador import backup
+from zelador.config import CONFIG_FILE, TAXONOMY_FILE, Config
+
+
+def pending_sessions(log_dir: Path) -> list[str]:
+    """Session logs holding unresolved `pending` entries — apply refuses while these exist."""
+    unresolved = []
+    for path in sorted(log_dir.glob("*.jsonl")):
+        with path.open() as handle:
+            if any(json.loads(line).get("status") == "pending" for line in handle if line.strip()):
+                unresolved.append(path.stem)
+    return unresolved
+
+
+def latest_audit(audit_dir: Path) -> dict | None:
+    """Newest audit stamp: report presence plus the freshest check's version/timestamp."""
+    stamps = []
+    for path in audit_dir.glob("*.json"):
+        try:
+            check = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            continue
+        if "library_version" in check and "timestamp" in check:
+            stamps.append((check["timestamp"], check["library_version"]))
+    if not stamps:
+        return None
+    timestamp, version = max(stamps)
+    return {
+        "timestamp": timestamp,
+        "library_version": version,
+        "report": (audit_dir / "audit-report.md").exists(),
+    }
+
+
+def local_status(backups_dir: Path, log_dir: Path, audit_dir: Path, cfg: Config) -> dict:
+    """Everything `zel status` can say without touching the API."""
+    info = backup.latest_backup(backups_dir)
+    backup_part = None
+    if info is not None:
+        stats = backup.backup_stats(info.path)
+        backup_part = {
+            "timestamp": info.timestamp,
+            "library_version": info.library_version,
+            "items": stats.items,
+            "collections": stats.collections,
+            "tags": stats.tags,
+        }
+    return {
+        "backup": backup_part,
+        "pending_sessions": pending_sessions(log_dir),
+        "audit": latest_audit(audit_dir),
+        "config": {
+            "config_yaml": CONFIG_FILE.exists(),
+            "taxonomy_yaml": TAXONOMY_FILE.exists(),
+            "citekey_sources": bool(cfg.citekey_sources),
+        },
+    }
+
+
+def render_status(status: dict) -> list[str]:
+    """One-screen human rendering of the assembled status object."""
+    api = status["api"]
+    if api.get("error"):
+        library_line = f"library:   unreachable — {api['error']}"
+    else:
+        library_line = f"library:   version {api['library_version']} (live)"
+    b = status["backup"]
+    backup_line = (
+        f"backup:    {b['timestamp']} @ version {b['library_version']} — "
+        f"{b['items']} items, {b['collections']} collections, {b['tags']} tags"
+        if b
+        else "backup:    none"
+    )
+    a = status["audit"]
+    audit_line = (
+        f"audit:     {a['timestamp']} @ version {a['library_version']}"
+        f"{'' if a['report'] else ' (report missing)'}"
+        if a
+        else "audit:     none"
+    )
+    pending = status["pending_sessions"]
+    pending_line = f"pending:   {', '.join(pending) if pending else 'none'}"
+    cfg = status["config"]
+    config_line = (
+        f"config:    config.yaml {'yes' if cfg['config_yaml'] else 'no'} · "
+        f"taxonomy.yaml {'yes' if cfg['taxonomy_yaml'] else 'no'} · "
+        f"citekey_sources {'yes' if cfg['citekey_sources'] else 'no'}"
+    )
+    return [library_line, backup_line, audit_line, pending_line, config_line]

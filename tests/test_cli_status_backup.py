@@ -1,0 +1,98 @@
+"""CLI tests for zel backup and zel status."""
+
+import json
+
+import httpx
+import pytest
+from typer.testing import CliRunner
+
+from tests.conftest import FakeZotero, make_collection, make_item
+from zelador import cli
+from zelador.client import ZoteroClient
+from zelador.config import Credentials
+
+runner = CliRunner()
+
+
+@pytest.fixture
+def fake(monkeypatch, tmp_path):
+    monkeypatch.setenv("ZELADOR_DATA_DIR", str(tmp_path / "data"))
+    fake = FakeZotero(
+        items=[make_item("AAAA1111", tags=[{"tag": "ai"}]), make_item("BBBB2222")],
+        collections=[make_collection("CCCC0001", "projects")],
+        settings={"tagColors": {"value": [], "version": 3}},
+        library_version=42,
+        page_size=100,
+    )
+    creds = Credentials(api_key="sekrit", user_id="11868292")
+
+    def fake_client():
+        return ZoteroClient(creds, transport=fake.transport, sleep=lambda s: None)
+
+    monkeypatch.setattr(cli, "make_client", fake_client)
+    return fake
+
+
+class TestBackupCommand:
+    def test_writes_backup_and_reports_outcome(self, fake, tmp_path):
+        result = runner.invoke(cli.app, ["backup"])
+        assert result.exit_code == 0
+        files = list((tmp_path / "data" / "backups").glob("*.jsonl"))
+        assert len(files) == 1
+        assert files[0].name in result.output
+
+    def test_json_outcome_object(self, fake):
+        result = runner.invoke(cli.app, ["backup", "--json"])
+        assert result.exit_code == 0
+        outcome = json.loads(result.stdout.strip().splitlines()[-1])
+        assert outcome["library_version"] == 42
+        assert outcome["items"] == 2
+        assert outcome["noop"] is False
+
+    def test_second_run_is_verified_noop(self, fake):
+        runner.invoke(cli.app, ["backup"])
+        result = runner.invoke(cli.app, ["backup", "--json"])
+        assert result.exit_code == 0
+        outcome = json.loads(result.stdout.strip().splitlines()[-1])
+        assert outcome["noop"] is True
+
+
+class TestStatusCommand:
+    def test_first_run_shows_missing_pieces(self, fake):
+        result = runner.invoke(cli.app, ["status"])
+        assert result.exit_code == 0
+        assert "42" in result.output  # live library version
+        assert "none" in result.output  # no backup yet
+
+    def test_after_backup_shows_counts_and_marker(self, fake):
+        runner.invoke(cli.app, ["backup"])
+        result = runner.invoke(cli.app, ["status"])
+        assert result.exit_code == 0
+        assert "2 items" in result.output
+        assert "version 42" in result.output
+
+    def test_api_down_still_prints_local_half(self, fake):
+        runner.invoke(cli.app, ["backup"])
+        fake.script.append(httpx.Response(500, text="down"))
+        result = runner.invoke(cli.app, ["status"])
+        assert result.exit_code == 0
+        assert "2 items" in result.output
+        assert "500" in result.output
+
+    def test_json_object(self, fake):
+        runner.invoke(cli.app, ["backup"])
+        result = runner.invoke(cli.app, ["status", "--json"])
+        status = json.loads(result.stdout.strip())
+        assert status["api"]["library_version"] == 42
+        assert status["backup"]["items"] == 2
+        assert status["pending_sessions"] == []
+        assert status["config"]["config_yaml"] in (True, False)
+
+    def test_pending_session_logs_surface(self, fake, tmp_path):
+        log_dir = tmp_path / "data" / "log"
+        log_dir.mkdir(parents=True)
+        (log_dir / "20260701T000000Z-merge-tags.jsonl").write_text(
+            '{"op": "1", "status": "applied"}\n{"op": "2", "status": "pending"}\n'
+        )
+        result = runner.invoke(cli.app, ["status"])
+        assert "20260701T000000Z-merge-tags" in result.output
