@@ -74,9 +74,12 @@ def load_config(path: Path = CONFIG_FILE) -> Config:
     unknown = set(raw) - allowed
     if unknown:
         raise ConfigError(f"unknown config key(s) in {path}: {', '.join(sorted(unknown))}")
+    sources = raw.get("citekey_sources") or []
+    if not isinstance(sources, list):
+        raise ConfigError(f"citekey_sources in {path} must be a list of paths/globs")
     return Config(
         zotero_data_dir=Path(raw["zotero_data_dir"]) if raw.get("zotero_data_dir") else None,
-        citekey_sources=list(raw.get("citekey_sources") or []),
+        citekey_sources=[str(s) for s in sources],
         style=raw.get("style") or "apa",
     )
 

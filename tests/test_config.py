@@ -62,6 +62,12 @@ class TestConfigFile:
         assert cfg.citekey_sources == ["refs.bib", "notes/**/*.md"]
         assert cfg.style == "chicago-note-bibliography"
 
+    def test_scalar_citekey_sources_fails_loudly(self, tmp_path):
+        f = tmp_path / "config.yaml"
+        f.write_text("citekey_sources: refs.bib\n")
+        with pytest.raises(config.ConfigError, match="citekey_sources"):
+            config.load_config(f)
+
     def test_unknown_key_fails_loudly(self, tmp_path):
         f = tmp_path / "config.yaml"
         f.write_text("zotero_dir: /wrong\n")
