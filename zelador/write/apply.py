@@ -18,7 +18,7 @@ from zelador.client import BATCH_SIZE, ZoteroClient, ZoteroError
 from zelador.status import pending_sessions
 from zelador.write.changelog import SessionLog
 from zelador.write.contracts import Operation, Plan
-from zelador.write.library_state import facet_field, fetch_objects, setting_value
+from zelador.write.library_state import facet_field, fetch_objects
 
 BIG_THRESHOLD = 200  # objects; beyond this apply refuses without --big
 
@@ -151,23 +151,13 @@ def _write_settings(client, log, settings: dict, outcome: ApplyOutcome) -> None:
             }
         ]
     )
-    # Our own item writes have already moved the library version past the plan's
-    # pin, so the pin alone can't guard this write. Re-read instead: refuse when
-    # the live value drifted from the plan's old, then pin to the version just seen.
-    if setting_value(client.setting(settings["name"])) != settings["old"]:
-        log.resolve("settings", "failed")
-        outcome.failed += 1
-        outcome.failures.append(
-            {
-                "key": settings["name"],
-                "code": 412,
-                "message": f"{settings['name']} changed since validation — re-validate",
-            }
-        )
-        return
-    pin = client.last_modified_version or settings["version"]
+    # Conditional writes check the setting's own version, so the plan's
+    # library-version pin still guards this write after our own item writes:
+    # only a post-validation change to the setting can move it past the pin.
     try:
-        version = client.write_setting(settings["name"], settings["new"], if_unmodified_since=pin)
+        version = client.write_setting(
+            settings["name"], settings["new"], if_unmodified_since=settings["version"]
+        )
     except ZoteroError as exc:
         log.resolve("settings", "failed")
         outcome.failed += 1

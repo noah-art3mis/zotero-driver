@@ -145,7 +145,14 @@ class FakeZotero:
             if request.method == "PUT":
                 return self._write_setting(request, name)
             if name in self.settings:
-                return self._json(self.settings[name])
+                # Single-object request: the header carries the setting's own
+                # version, not the library version (matches the live API).
+                setting = self.settings[name]
+                return httpx.Response(
+                    200,
+                    json=setting,
+                    headers={"Last-Modified-Version": str(setting["version"])},
+                )
             return httpx.Response(404, text="Not found")
         return httpx.Response(404, text=f"no fake route for {path}")
 
@@ -189,8 +196,9 @@ class FakeZotero:
 
     def _write_setting(self, request: httpx.Request, name: str) -> httpx.Response:
         cond = request.headers.get("If-Unmodified-Since-Version")
-        if cond is not None and int(cond) < self.library_version:
-            return httpx.Response(412, text="Library has been modified since specified version")
+        current = self.settings.get(name, {}).get("version", 0)
+        if cond is not None and int(cond) < current:
+            return httpx.Response(412, text="Object has been modified since specified version")
         self.library_version += 1
         value = json.loads(request.content)["value"]
         self.settings[name] = {"value": value, "version": self.library_version}

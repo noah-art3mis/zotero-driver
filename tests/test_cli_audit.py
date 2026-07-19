@@ -66,7 +66,8 @@ class TestAuditCommand:
         summary = json.loads(result.stdout.strip())
         assert summary["counts"]["registry"] > 0  # AI/ai tags are unregistered
 
-    def test_registry_check_without_taxonomy_is_bad_input(self, fake):
+    def test_registry_check_without_taxonomy_is_bad_input(self, fake, monkeypatch, tmp_path):
+        monkeypatch.setattr(config, "TAXONOMY_FILE", tmp_path / "taxonomy.yaml")
         result = runner.invoke(cli.app, ["audit", "registry"])
         assert result.exit_code == 2
 
