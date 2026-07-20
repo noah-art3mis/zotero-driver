@@ -215,12 +215,18 @@ class _Expander:
     # -- item ops ------------------------------------------------------------
 
     def _fill_field(self, group: int, where: str, intent: dict) -> None:
-        key, field, value = intent["key"], intent["field"], intent["value"]
+        self._write_field(group, where, intent["key"], intent["field"], intent["value"],
+                          op="fill_field")
+
+    def _clear_field(self, group: int, where: str, intent: dict) -> None:
+        self._write_field(group, where, intent["key"], intent["field"], "", op="clear_field")
+
+    def _write_field(self, group: int, where, key, field, value, op: str) -> None:
         data = self.require_item(key, where)
         if data is None:
             return
         if field == "extra":
-            self.fail(where, "'extra' is never a fill_field target — it is plugin territory "
+            self.fail(where, f"'extra' is never a {op} target — it is plugin territory "
                              "(Better BibTeX pins citekeys there)")
             return
         valid = self.client.item_type_fields(data["itemType"])
@@ -232,8 +238,27 @@ class _Expander:
             return
         version = self.items_by_key[key]["version"]
         risk = "low" if not old else "high"
-        self.emit(group, "fill_field", "item", key, version, f"field:{field}", old, value, risk)
+        self.emit(group, op, "item", key, version, f"field:{field}", old, value, risk)
         data[field] = value
+
+    def _set_creators(self, group: int, where: str, intent: dict) -> None:
+        key, creators = intent["key"], intent["creators"]
+        data = self.require_item(key, where)
+        if data is None:
+            return
+        valid = self.client.item_type_creator_types(data["itemType"])
+        for creator in creators:
+            if creator["creatorType"] not in valid:
+                self.fail(where, f"{creator['creatorType']!r} is not a creator type "
+                                 f"of {data['itemType']!r}")
+                return
+        old = data.get("creators", [])
+        if old == creators:
+            return
+        version = self.items_by_key[key]["version"]
+        risk = "low" if not old else "high"
+        self.emit(group, "set_creators", "item", key, version, "creators", old, creators, risk)
+        data["creators"] = creators
 
     def _trash_item(self, group: int, where: str, intent: dict) -> None:
         key = intent["key"]
