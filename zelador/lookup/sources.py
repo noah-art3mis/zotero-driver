@@ -79,7 +79,9 @@ class Web:
 
 
 def _similarity(a: str, b: str) -> float:
-    normalize = lambda s: _NON_ALNUM.sub(" ", s.lower()).strip()  # noqa: E731
+    def normalize(s: str) -> str:
+        return _NON_ALNUM.sub(" ", s.lower()).strip()
+
     return round(SequenceMatcher(None, normalize(a), normalize(b)).ratio(), 3)
 
 

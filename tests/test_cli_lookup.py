@@ -7,7 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tests.conftest import FakeZotero, make_item
-from tests.test_lookup_fulltext import make_pdf, pdf_attachment
+from tests.test_lookup_fulltext import pdf_attachment, storage_with_pdf
 from tests.test_lookup_sources import CROSSREF_WORK
 from zelador import cli, cli_lookup, config
 from zelador.client import ZoteroClient
@@ -32,7 +32,7 @@ def env(monkeypatch, tmp_path):
             pdf_attachment(),
         ],
         children={"AAAA1111": [pdf_attachment()]},
-        fulltexts={"ATTACH01": "word " * 30},
+        fulltexts={"ATTACH01": {"content": "word " * 30, "totalPages": 7}},
         library_version=42,
         page_size=100,
     )
@@ -87,25 +87,33 @@ class TestCandidateLookup:
 
 
 class TestFulltextLookup:
-    def test_server_content_bounded(self, env, monkeypatch):
-        monkeypatch.setattr(cli_lookup, "FULLTEXT_CHARS", 40)
+    def test_server_head_bounded_with_pages_stated(self, env, monkeypatch):
+        monkeypatch.setattr(cli_lookup.fulltext_mod, "HEAD_CHARS", 40)
         result = runner.invoke(cli.app, ["lookup", "fulltext", "AAAA1111", "--json"])
         payload = json.loads(result.stdout.strip())
         assert payload["origin"] == "server" and payload["attachment"] == "ATTACH01"
         assert payload["truncated"] is True and len(payload["content"]) == 40
+        assert payload["pages"] == 7
 
     def test_full_content_untruncated(self, env):
         result = runner.invoke(cli.app, ["lookup", "fulltext", "AAAA1111", "--full", "--json"])
         payload = json.loads(result.stdout.strip())
         assert payload["truncated"] is False and payload["content"].count("word") == 30
 
+    def test_local_fallback_states_the_pdf_path(self, env, monkeypatch, tmp_path):
+        fake, _ = env
+        fake.fulltexts.clear()
+        storage = storage_with_pdf(tmp_path, pages=("First page", "Second page"))
+        monkeypatch.setattr(config, "discover_zotero_dir", lambda override=None: storage)
+        result = runner.invoke(cli.app, ["lookup", "fulltext", "AAAA1111", "--json"])
+        payload = json.loads(result.stdout.strip())
+        assert payload["origin"] == "local" and payload["pages"] == 2
+        assert payload["content"] == "First page"  # the head is a real page
+        assert payload["path"].endswith("paper.pdf")
+
     def test_image_renders_page_one(self, env, monkeypatch, tmp_path):
-        storage = tmp_path / "zotero"
-        (storage / "storage" / "ATTACH01").mkdir(parents=True)
-        (storage / "storage" / "ATTACH01" / "paper.pdf").write_bytes(make_pdf("Scan"))
-        monkeypatch.setattr(
-            config, "discover_zotero_dir", lambda override=None: storage
-        )
+        storage = storage_with_pdf(tmp_path, pages=("Scan",))
+        monkeypatch.setattr(config, "discover_zotero_dir", lambda override=None: storage)
         result = runner.invoke(
             cli.app, ["lookup", "fulltext", "AAAA1111", "--image", "--json"]
         )
@@ -114,3 +122,26 @@ class TestFulltextLookup:
         assert image.endswith(".png")
         with open(image, "rb") as handle:
             assert handle.read(8) == b"\x89PNG\r\n\x1a\n"
+
+    def test_image_survives_garbled_text_extraction(self, env, monkeypatch, tmp_path):
+        # The whole point of --image: the render must land even when pypdf
+        # cannot extract a single character.
+        fake, _ = env
+        fake.fulltexts.clear()
+        storage = storage_with_pdf(tmp_path, pages=("Scan",))
+        monkeypatch.setattr(config, "discover_zotero_dir", lambda override=None: storage)
+        monkeypatch.setattr(
+            cli_lookup.fulltext_mod,
+            "_extract_pages",
+            lambda path: (_ for _ in ()).throw(
+                cli_lookup.sources.SourceError("pypdf could not read it")
+            ),
+        )
+        result = runner.invoke(
+            cli.app, ["lookup", "fulltext", "AAAA1111", "--image", "--json"]
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout.strip())
+        assert payload["content"] is None
+        assert "pypdf" in payload["error"]
+        assert payload["image"].endswith(".png")

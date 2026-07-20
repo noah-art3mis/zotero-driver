@@ -5,21 +5,28 @@ import pytest
 from tests.conftest import USER_ID, FakeZotero, make_item
 from zelador.client import ZoteroClient
 from zelador.config import Credentials
+from zelador.lookup.cache import LookupCache
 from zelador.lookup.fulltext import fetch_fulltext, render_page
 from zelador.lookup.sources import SourceError
 
 
-def make_pdf(text: str) -> bytes:
-    """A minimal single-page PDF with a correct xref, extractable by pypdf."""
-    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+def make_pdf(*page_texts: str) -> bytes:
+    """A minimal PDF, one page per text, with a correct xref — extractable by pypdf."""
+    count = len(page_texts)
+    font_ref = 3 + 2 * count
+    kids = " ".join(f"{3 + 2 * i} 0 R" for i in range(count))
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
-        b"/Resources << /Font << /F1 5 0 R >> >> >>",
-        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Type /Pages /Kids [%s] /Count %d >>" % (kids.encode(), count),
     ]
+    for i, text in enumerate(page_texts):
+        stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+        objects.append(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R "
+            b"/Resources << /Font << /F1 %d 0 R >> >> >>" % (4 + 2 * i, font_ref)
+        )
+        objects.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
     for number, obj in enumerate(objects, 1):
@@ -46,22 +53,25 @@ def pdf_attachment(key="ATTACH01", filename="paper.pdf"):
                      filename=filename)
 
 
-def storage_with_pdf(tmp_path, key="ATTACH01", filename="paper.pdf", text="Hello local"):
+def storage_with_pdf(tmp_path, key="ATTACH01", filename="paper.pdf", pages=("Hello local",)):
     storage = tmp_path / "zotero"
-    (storage / "storage" / key).mkdir(parents=True)
-    (storage / "storage" / key / filename).write_bytes(make_pdf(text))
+    (storage / "storage" / key).mkdir(parents=True, exist_ok=True)
+    (storage / "storage" / key / filename).write_bytes(make_pdf(*pages))
     return storage
 
 
 class TestFetchFulltext:
-    def test_server_fulltext_for_an_attachment(self):
+    def test_server_fulltext_reports_pages_and_truncatable_head(self):
         fake = FakeZotero(
-            items=[pdf_attachment()], fulltexts={"ATTACH01": "server says hello"}
+            items=[pdf_attachment()],
+            fulltexts={"ATTACH01": {"content": "server says hello", "totalPages": 12}},
         )
         result = fetch_fulltext(client_for(fake), "ATTACH01", zotero_dir=None)
         assert result.origin == "server"
         assert result.content == "server says hello"
-        assert result.attachment == "ATTACH01"
+        assert result.head == "server says hello"
+        assert result.pages == 12
+        assert result.attachment == "ATTACH01" and result.path is None
 
     def test_parent_item_resolves_to_its_pdf_child(self):
         fake = FakeZotero(
@@ -72,22 +82,46 @@ class TestFetchFulltext:
                     pdf_attachment(),
                 ]
             },
-            fulltexts={"ATTACH01": "via the parent"},
+            fulltexts={"ATTACH01": {"content": "via the parent"}},
         )
         result = fetch_fulltext(client_for(fake), "PARENT01", zotero_dir=None)
         assert result.attachment == "ATTACH01" and result.content == "via the parent"
 
+    def test_server_response_is_cached_for_free_escalation(self, tmp_path):
+        fake = FakeZotero(
+            items=[pdf_attachment()],
+            fulltexts={"ATTACH01": {"content": "cache me"}},
+        )
+        client = client_for(fake)
+        cache = LookupCache(tmp_path / "cache")
+        fetch_fulltext(client, "ATTACH01", zotero_dir=None, cache=cache)
+        before = len(fake.requests)
+        again = fetch_fulltext(client, "ATTACH01", zotero_dir=None, cache=cache)
+        fulltext_hits = [r for r in fake.requests[before:] if "/fulltext" in str(r.url)]
+        assert again.content == "cache me" and fulltext_hits == []
+
     def test_server_miss_falls_back_to_local_pypdf(self, tmp_path):
-        storage = storage_with_pdf(tmp_path, text="Hello from the local PDF")
+        storage = storage_with_pdf(tmp_path, pages=("First page here", "Second page here"))
         fake = FakeZotero(items=[pdf_attachment()])
         result = fetch_fulltext(client_for(fake), "ATTACH01", zotero_dir=storage)
         assert result.origin == "local"
-        assert "Hello from the local PDF" in result.content
+        assert "First page here" in result.content and "Second page here" in result.content
+        assert result.head == "First page here"  # the head is a real first page
+        assert result.pages == 2
+        assert result.path == str(storage / "storage" / "ATTACH01" / "paper.pdf")
 
     def test_no_server_text_and_no_local_dir_fails_loudly(self):
         fake = FakeZotero(items=[pdf_attachment()])
         with pytest.raises(SourceError, match="ATTACH01"):
             fetch_fulltext(client_for(fake), "ATTACH01", zotero_dir=None)
+
+    def test_garbled_local_pdf_fails_loudly(self, tmp_path):
+        storage = tmp_path / "zotero"
+        (storage / "storage" / "ATTACH01").mkdir(parents=True)
+        (storage / "storage" / "ATTACH01" / "paper.pdf").write_bytes(b"not a pdf at all")
+        fake = FakeZotero(items=[pdf_attachment()])
+        with pytest.raises(SourceError, match="pypdf"):
+            fetch_fulltext(client_for(fake), "ATTACH01", zotero_dir=storage)
 
     def test_item_without_pdf_attachment_fails_loudly(self):
         fake = FakeZotero(items=[make_item("PARENT01")], children={"PARENT01": []})

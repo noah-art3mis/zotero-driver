@@ -14,7 +14,6 @@ from zelador.lookup.cache import LookupCache
 from zelador.output import emit_ndjson, note
 
 MAX_CANDIDATES = 3
-FULLTEXT_CHARS = 10_000
 
 CANDIDATE_SOURCES = {"crossref": sources.crossref, "arxiv": sources.arxiv}
 
@@ -100,28 +99,53 @@ def _candidates(client, source: str, key: str, full: bool, as_json: bool) -> Non
 
 def _fulltext(client, key: str, full: bool, image: bool, as_json: bool) -> None:
     zotero_dir = _zotero_dir()
-    result = fulltext_mod.fetch_fulltext(client, key, zotero_dir)
-    content = result.content if full else result.content[:FULLTEXT_CHARS]
-    truncated = len(content) < len(result.content)
+    attachment = fulltext_mod.resolve_attachment(client, key)
     image_path = None
     if image:
+        # Rendered before text extraction: --image exists for exactly the
+        # scanned/garbled PDFs whose extraction fails.
         if zotero_dir is None:
             raise sources.SourceError("--image needs the local Zotero data dir")
-        attachment = fulltext_mod.resolve_attachment(client, key)
         pdf = fulltext_mod.attachment_pdf_path(zotero_dir, attachment)
         out = config.ensure_dir("cache") / f"{attachment['key']}-page1.png"
         image_path = str(fulltext_mod.render_page(pdf, out))
+    cache = LookupCache(config.ensure_dir("cache"))
+    try:
+        result = fulltext_mod.attachment_fulltext(client, key, attachment, zotero_dir, cache)
+    except sources.SourceError as exc:
+        if image_path is None:
+            raise
+        _emit_image_only(key, attachment["key"], str(exc), image_path, as_json)
+        return
+    content = result.content if full else result.head
+    truncated = len(content) < len(result.content)
     if as_json:
         payload = {**asdict(result), "content": content, "truncated": truncated}
+        del payload["head"]
         if image:
             payload["image"] = image_path
         emit_ndjson(payload)
         return
     print(content)
-    note(f"fulltext of {result.attachment} via {result.origin}")
+    pages = f", {result.pages} page(s)" if result.pages else ""
+    note(f"fulltext of {result.attachment} via {result.origin}{pages}")
+    if result.path:
+        note(f"pdf: {result.path}")
     if truncated:
-        note(f"truncated to {FULLTEXT_CHARS} chars — --full for everything")
+        note("head only — --full for everything")
     if image_path:
+        note(f"page one rendered: {image_path}")
+
+
+def _emit_image_only(key, attachment_key, error, image_path, as_json) -> None:
+    """Text extraction failed but the render succeeded — deliver the image."""
+    if as_json:
+        emit_ndjson(
+            {"item": key, "attachment": attachment_key, "content": None,
+             "error": error, "image": image_path}
+        )
+    else:
+        note(f"no text: {error}")
         note(f"page one rendered: {image_path}")
 
 

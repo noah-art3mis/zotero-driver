@@ -95,7 +95,7 @@ class FakeZotero:
         fulltexts: dict | None = None,
     ):
         self.children = children or {}  # parent key -> child items
-        self.fulltexts = fulltexts or {}  # attachment key -> extracted text
+        self.fulltexts = fulltexts or {}  # attachment key -> fulltext response body
         self.items = items or []
         self.collections = collections or []
         self.tags = tags or []
@@ -141,7 +141,7 @@ class FakeZotero:
         fulltext = re.fullmatch(f"/users/{USER_ID}/items/(\\w+)/fulltext", path)
         if fulltext:
             if fulltext.group(1) in self.fulltexts:
-                return self._json({"content": self.fulltexts[fulltext.group(1)]})
+                return self._json(self.fulltexts[fulltext.group(1)])
             return httpx.Response(404, text="Not found")
         if path == f"/users/{USER_ID}/collections":
             if request.method == "POST":

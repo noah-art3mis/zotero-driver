@@ -201,10 +201,10 @@ class TestChildrenAndFulltext:
         children = client.children("PARENT01")
         assert [c["key"] for c in children] == ["ATTACH01"]
 
-    def test_fulltext_content(self):
-        fake = FakeZotero(fulltexts={"ATTACH01": "the extracted text"})
+    def test_fulltext_body(self):
+        fake = FakeZotero(fulltexts={"ATTACH01": {"content": "the text", "totalPages": 3}})
         client = client_for(fake)
-        assert client.fulltext("ATTACH01") == "the extracted text"
+        assert client.fulltext("ATTACH01") == {"content": "the text", "totalPages": 3}
 
     def test_fulltext_absent_is_none(self):
         fake = FakeZotero()

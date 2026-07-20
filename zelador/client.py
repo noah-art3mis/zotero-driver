@@ -208,12 +208,13 @@ class ZoteroClient:
         """Child items (attachments, notes) of one item."""
         return self._paginated(f"{self._prefix}/items/{key}/children")
 
-    def fulltext(self, key: str) -> str | None:
-        """Server-side extracted fulltext of an attachment; None when the server has none."""
+    def fulltext(self, key: str) -> dict | None:
+        """Server-side extracted fulltext of an attachment (content plus page/char
+        totals); None when the server has none."""
         response = self._request("GET", f"{self._prefix}/items/{key}/fulltext")
         if response.status_code == 404:
             return None
-        return response.json().get("content", "")
+        return response.json()
 
     def setting(self, name: str) -> dict | None:
         """A library setting (e.g. tagColors); None when unset."""
