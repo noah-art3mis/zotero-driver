@@ -20,7 +20,7 @@ from pathlib import Path
 from zelador.client import BATCH_SIZE, ZoteroClient
 from zelador.write.apply import ApplyOutcome, execute_chunk
 from zelador.write.changelog import SessionLog, read_log
-from zelador.write.library_state import facet_value, fetch_objects, setting_value
+from zelador.write.library_state import facet_value, fetch_objects, setting_value, state_equal
 
 
 class RestoreError(Exception):
@@ -60,11 +60,21 @@ def _landed(client, current, op) -> tuple[bool, int | None]:
     if obj is None:
         return False, None
     if op["facet"] == "object":
-        data, created = obj["data"], op["new"]
-        landed = (
-            data.get("name") == created["name"]
-            and data.get("parentCollection", False) == created["parentCollection"]
-        )
+        # A create's payload is the object's whole data: {name, parentCollection}
+        # for a collection, {itemType, fields, tags, collections, ...} for an item
+        # (no "name"). Landed means every created field is present on the server.
+        data = obj["data"]
+        landed = True
+        for name, value in op["new"].items():
+            live = data.get(name)
+            if name in ("tags", "collections", "creators"):
+                live = live or []
+            if name in ("parentCollection", "parentItem"):
+                live = data.get(name, False)
+            if live is None and value == "":
+                continue
+            if not state_equal(name, live, value):
+                landed = False
         return landed, obj["version"]
     return facet_value(obj["data"], op["facet"]) == op["new"], obj["version"]
 
