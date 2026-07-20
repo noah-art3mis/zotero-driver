@@ -13,7 +13,7 @@ import secrets
 from collections.abc import Callable
 from datetime import datetime
 
-from zelador.client import ZoteroClient
+from zelador.client import ZoteroClient, ZoteroError
 from zelador.taxonomy import Taxonomy
 from zelador.write.contracts import Changeset, Operation, Plan, plan_id
 
@@ -259,6 +259,41 @@ class _Expander:
         risk = "low" if not old else "high"
         self.emit(group, "set_creators", "item", key, version, "creators", old, creators, risk)
         data["creators"] = creators
+
+    def _set_item_type(self, group: int, where: str, intent: dict) -> None:
+        key, new_type = intent["key"], intent["itemType"]
+        data = self.require_item(key, where)
+        if data is None:
+            return
+        old_type = data["itemType"]
+        if old_type == new_type:
+            return
+        try:
+            new_valid = self.client.item_type_fields(new_type)
+        except ZoteroError:
+            self.fail(where, f"{new_type!r} is not a valid item type")
+            return
+        bad_creators = sorted(
+            {c["creatorType"] for c in data.get("creators", [])}
+            - self.client.item_type_creator_types(new_type)
+        )
+        if bad_creators:
+            self.fail(where, f"creator type(s) {', '.join(bad_creators)} not valid for "
+                             f"{new_type!r} — set_creators first")
+            return
+        old_valid = self.client.item_type_fields(old_type)
+        version = self.items_by_key[key]["version"]
+        self.emit(group, "set_item_type", "item", key, version, "itemType",
+                  old_type, new_type, "high")
+        data["itemType"] = new_type
+        # The server validates the merged object against the new type: stored
+        # fields it no longer allows must be cleared in the same write.
+        for name in sorted(set(data) & old_valid - new_valid):
+            if not data.get(name):
+                continue
+            self.emit(group, "set_item_type", "item", key, version, f"field:{name}",
+                      data[name], "", "high")
+            data[name] = ""
 
     def _trash_item(self, group: int, where: str, intent: dict) -> None:
         key = intent["key"]

@@ -302,6 +302,48 @@ class TestSetCreators:
         )
 
 
+class TestSetItemType:
+    def test_type_change_emits_high_risk_item_type_facet(self):
+        plan = run_expand(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "book"}],
+            items=[make_item("AAAA1111", version=6)],
+        )
+        op = plan.operations[0]
+        assert op.facet == "itemType" and op.old == "journalArticle" and op.new == "book"
+        assert op.risk == "high"
+
+    def test_fields_invalid_in_new_type_are_cleared_alongside(self):
+        plan = run_expand(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "book"}],
+            items=[make_item("AAAA1111", volume="3", DOI="10.1/x", url="https://x")],
+        )
+        cleared = {op.facet: op.old for op in plan.operations if op.facet != "itemType"}
+        # volume and DOI are journalArticle-only; url is valid for book and survives
+        assert cleared == {"field:volume": "3", "field:DOI": "10.1/x"}
+        assert all(op.new == "" and op.risk == "high" for op in plan.operations
+                   if op.facet != "itemType")
+
+    def test_same_type_is_a_no_op(self):
+        plan = run_expand(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "journalArticle"}],
+            items=[make_item("AAAA1111")],
+        )
+        assert plan.operations == []
+
+    def test_unknown_type_fails(self):
+        assert "notAType" in failures_of(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "notAType"}],
+            items=[make_item("AAAA1111")],
+        )
+
+    def test_creators_invalid_in_new_type_block_the_change(self):
+        creators = [{"creatorType": "editor", "lastName": "X"}]
+        assert "editor" in failures_of(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "webpage"}],
+            items=[make_item("AAAA1111", creators=creators)],
+        )
+
+
 class TestCollectionMembership:
     def test_add_to_collection(self):
         plan = run_expand(
