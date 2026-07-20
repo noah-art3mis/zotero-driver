@@ -344,6 +344,91 @@ class TestSetItemType:
         )
 
 
+class TestCreateItem:
+    INTENT = {
+        "op": "create_item",
+        "itemType": "book",
+        "fields": {"title": "Reason in Human Affairs", "date": "1983"},
+        "creators": [{"creatorType": "author", "lastName": "Simon"}],
+        "tags": ["status:to-read"],
+    }
+
+    def test_create_emits_object_op_with_generated_key(self):
+        plan = run_expand([{**self.INTENT, "collections": ["COLL1111"]}],
+                          collections=[make_collection("COLL1111", "Projects")])
+        op = plan.operations[0]
+        assert (op.op, op.kind, op.key, op.version, op.facet) == (
+            "create_item", "item", "NEWC0001", 0, "object")
+        assert op.old is None and op.risk == "low"
+        assert op.new["itemType"] == "book" and op.new["title"] == "Reason in Human Affairs"
+        assert op.new["tags"] == [{"tag": "status:to-read", "type": 0}]
+        assert op.new["collections"] == ["COLL1111"]
+        assert op.new["creators"][0]["lastName"] == "Simon"
+
+    def test_fields_checked_against_type(self):
+        bad = {**self.INTENT, "fields": {"publisher": "SUP", "volume": "3"}}
+        assert "volume" in failures_of([bad])
+
+    def test_extra_is_never_a_target(self):
+        bad = {**self.INTENT, "fields": {"title": "T", "extra": "citekey"}}
+        assert "extra" in failures_of([bad])
+
+    def test_tags_must_be_canonical(self):
+        assert "topic:ai" in failures_of([{**self.INTENT, "tags": ["AI"]}])
+
+    def test_exclusive_family_enforced_within_the_new_item(self):
+        bad = {**self.INTENT, "tags": ["status:to-read", "status:read"]}
+        assert "exclusive" in failures_of([bad])
+
+    def test_collections_must_exist(self):
+        assert "COLL1111" in failures_of([{**self.INTENT, "collections": ["COLL1111"]}])
+
+    def test_creators_checked_against_type(self):
+        bad = {**self.INTENT, "creators": [{"creatorType": "recipient", "lastName": "X"}]}
+        assert "recipient" in failures_of([bad])
+
+    def test_unknown_item_type_fails(self):
+        assert "notAType" in failures_of([{**self.INTENT, "itemType": "notAType"}])
+
+
+class TestCreateItemAdoption:
+    def intent(self, attachment="ATTA1111"):
+        return {
+            "op": "create_item",
+            "itemType": "book",
+            "fields": {"title": "Far-right publics on Brazilian Telegram"},
+            "attachment": attachment,
+        }
+
+    def standalone(self, key="ATTA1111", **data):
+        return make_item(key, version=5, item_type="attachment", title="384901eng-3", **data)
+
+    def test_adoption_writes_parent_item_on_the_attachment(self):
+        plan = run_expand([self.intent()], items=[self.standalone()])
+        create, adopt = plan.operations
+        assert create.key == "NEWC0001" and create.facet == "object"
+        assert (adopt.op, adopt.key, adopt.version, adopt.facet) == (
+            "create_item", "ATTA1111", 5, "parentItem")
+        assert adopt.old is False and adopt.new == "NEWC0001" and adopt.risk == "low"
+
+    def test_missing_attachment_fails(self):
+        assert "ATTA1111" in failures_of([self.intent()])
+
+    def test_non_attachment_item_refused(self):
+        assert "not an attachment" in failures_of(
+            [self.intent("AAAA1111")], items=[make_item("AAAA1111")])
+
+    def test_already_parented_attachment_refused(self):
+        items = [self.standalone(parentItem="BBBB2222")]
+        assert "already" in failures_of([self.intent()], items=items)
+
+    def test_trashed_attachment_is_invisible_like_all_trash(self):
+        # expansion reads the live library without trash — a trashed attachment
+        # is unknown, same as for every other op
+        assert "no such item" in failures_of(
+            [self.intent()], items=[self.standalone(deleted=True)])
+
+
 class TestCollectionMembership:
     def test_add_to_collection(self):
         plan = run_expand(

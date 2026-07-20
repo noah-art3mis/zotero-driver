@@ -260,6 +260,80 @@ class _Expander:
         self.emit(group, "set_creators", "item", key, version, "creators", old, creators, risk)
         data["creators"] = creators
 
+    def _create_item(self, group: int, where: str, intent: dict) -> None:
+        item_type = intent["itemType"]
+        try:
+            valid = self.client.item_type_fields(item_type)
+        except ZoteroError:
+            self.fail(where, f"{item_type!r} is not a valid item type")
+            return
+        ok = self._check_create_fields(where, item_type, valid, intent)
+        ok = self._check_create_tags(where, intent.get("tags", [])) and ok
+        for ckey in intent.get("collections", []):
+            if ckey not in self.colls_by_key:
+                self.fail(where, f"no such collection: {ckey}")
+                ok = False
+        attachment = intent.get("attachment")
+        if attachment is not None:
+            ok = self._check_adoptable(where, attachment) and ok
+        if not ok:
+            return
+        key = self.keygen()
+        new = {"itemType": item_type, **intent["fields"],
+               "tags": [{"tag": t, "type": 0} for t in intent.get("tags", [])],
+               "collections": list(intent.get("collections", []))}
+        if intent.get("creators"):
+            new["creators"] = intent["creators"]
+        self.emit(group, "create_item", "item", key, 0, "object", None, new, "low")
+        self.items_by_key[key] = {"key": key, "version": 0,
+                                  "data": {**copy.deepcopy(new), "key": key}}
+        self.created_keys.add(key)
+        if attachment is not None:
+            version = self.items_by_key[attachment]["version"]
+            self.emit(group, "create_item", "item", attachment, version,
+                      "parentItem", False, key, "low")
+            self.item_state(attachment)["parentItem"] = key
+
+    def _check_create_fields(self, where, item_type, valid, intent) -> bool:
+        ok = True
+        for name in intent["fields"]:
+            if name == "extra":
+                self.fail(where, "'extra' is never a create_item target — it is plugin "
+                                 "territory (Better BibTeX pins citekeys there)")
+                ok = False
+            elif name not in valid:
+                self.fail(where, f"{name!r} is not a field of {item_type!r}")
+                ok = False
+        for creator in intent.get("creators", []):
+            if creator["creatorType"] not in self.client.item_type_creator_types(item_type):
+                self.fail(where, f"{creator['creatorType']!r} is not a creator type "
+                                 f"of {item_type!r}")
+                ok = False
+        return ok
+
+    def _check_create_tags(self, where, tags: list[str]) -> bool:
+        ok = all([self._canonical_tag(tag, where) for tag in tags])
+        if self.taxonomy is None:
+            return ok
+        for family, spec in self.taxonomy.families.items():
+            if spec.exclusive and sum(t.startswith(f"{family}:") for t in tags) > 1:
+                self.fail(where, f"would carry multiple '{family}:' tags — family is exclusive")
+                ok = False
+        return ok
+
+    def _check_adoptable(self, where, attachment: str) -> bool:
+        if attachment not in self.items_by_key:
+            self.fail(where, f"no such item: {attachment}")
+            return False
+        data = self.item_state(attachment)
+        if data["itemType"] != "attachment":
+            self.fail(where, f"{attachment} is not an attachment")
+            return False
+        if data.get("parentItem"):
+            self.fail(where, f"{attachment} is already attached to {data['parentItem']}")
+            return False
+        return True
+
     def _set_item_type(self, group: int, where: str, intent: dict) -> None:
         key, new_type = intent["key"], intent["itemType"]
         data = self.require_item(key, where)
