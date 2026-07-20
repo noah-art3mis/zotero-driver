@@ -18,14 +18,14 @@ def facet_value(data: dict, facet: str):
     """The current value of an operation's facet, read from an object's data."""
     if facet == "tags":
         return data.get("tags", [])
-    if facet == "collections":
-        return data.get("collections", [])
+    if facet in ("collections", "creators"):
+        return data.get(facet, [])
     if facet.startswith("field:"):
         return data.get(facet_field(facet)) or ""
-    if facet == "name":
-        return data.get("name")
-    if facet == "parentCollection":
-        return data.get("parentCollection", False)
+    if facet in ("name", "itemType"):
+        return data.get(facet)
+    if facet in ("parentCollection", "parentItem"):
+        return data.get(facet, False)
     if facet == "deleted":
         return bool(data.get("deleted", False))
     raise ValueError(f"unknown facet: {facet}")

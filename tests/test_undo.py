@@ -108,6 +108,88 @@ class TestReplay:
         assert outcome.undone == 2
         assert fake.items[0]["data"]["tags"] == first_old
 
+    def test_create_item_undone_by_trashing(self, tmp_path):
+        created = {
+            "itemType": "book",
+            "title": "Far-right publics",
+            "tags": [{"tag": "status:to-read", "type": 0}],
+            "collections": [],
+        }
+        fake = FakeZotero(
+            items=[make_item("NEWI1111", version=5, item_type="book", title="Far-right publics",
+                             tags=[{"tag": "status:to-read"}])],
+            library_version=5,
+        )
+        write_session(
+            tmp_path,
+            [(op_dict("op-001", "NEWI1111", "object", None, created, version=0), "applied", 5)],
+        )
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
+        assert outcome.undone == 1 and outcome.conflicts == []
+        assert fake.items[0]["data"]["deleted"] is True  # trashed, never purged
+
+    def test_drifted_created_item_is_a_conflict(self, tmp_path):
+        created = {"itemType": "book", "title": "Far-right publics", "tags": [], "collections": []}
+        fake = FakeZotero(
+            items=[make_item("NEWI1111", version=9, item_type="book", title="Edited since")],
+            library_version=9,
+        )
+        write_session(
+            tmp_path,
+            [(op_dict("op-001", "NEWI1111", "object", None, created, version=0), "applied", 5)],
+        )
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
+        assert outcome.undone == 0
+        assert any("NEWI1111" in c for c in outcome.conflicts)
+        assert not fake.items[0]["data"].get("deleted")
+
+    def test_adoption_undone_by_unparenting(self, tmp_path):
+        fake = FakeZotero(
+            items=[make_item("ATTA1111", version=5, item_type="attachment",
+                             parentItem="NEWI1111")],
+            library_version=5,
+        )
+        write_session(
+            tmp_path,
+            [(op_dict("op-001", "ATTA1111", "parentItem", False, "NEWI1111", version=2),
+              "applied", 5)],
+        )
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
+        assert outcome.undone == 1 and outcome.conflicts == []
+        assert fake.items[0]["data"]["parentItem"] is False
+
+    def test_set_creators_restores_previous_creators(self, tmp_path):
+        old = [{"creatorType": "author", "lastName": "Wrong"}]
+        new = [{"creatorType": "author", "lastName": "Castro"}]
+        fake = FakeZotero(
+            items=[make_item("AAAA1111", version=5, creators=new)], library_version=5
+        )
+        write_session(
+            tmp_path,
+            [(op_dict("op-001", "AAAA1111", "creators", old, new, version=1), "applied", 5)],
+        )
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
+        assert outcome.undone == 1 and outcome.conflicts == []
+        assert fake.items[0]["data"]["creators"] == old
+
+    def test_set_item_type_restores_type_and_cleared_fields(self, tmp_path):
+        fake = FakeZotero(
+            items=[make_item("AAAA1111", version=5, item_type="book")], library_version=5
+        )
+        write_session(
+            tmp_path,
+            [
+                (op_dict("op-001", "AAAA1111", "itemType", "journalArticle", "book",
+                         version=1), "applied", 5),
+                (op_dict("op-002", "AAAA1111", "field:volume", "3", "", version=1),
+                 "applied", 5),
+            ],
+        )
+        outcome = run_undo(SESSION, client_for(fake), tmp_path)
+        assert outcome.undone == 2 and outcome.conflicts == []
+        assert fake.items[0]["data"]["itemType"] == "journalArticle"
+        assert fake.items[0]["data"]["volume"] == "3"
+
     def test_create_collection_undone_by_trashing(self, tmp_path):
         fake = FakeZotero(
             collections=[make_collection("NEWC0001", "archive", version=5)], library_version=5

@@ -188,6 +188,8 @@ def _verify(client, applied_writes: list[tuple[str, dict]], outcome: ApplyOutcom
                 live = bool(live)
             if name == "tags":
                 live = live or []
+            if live is None and value == "":
+                continue  # the server drops fields written as the empty string
             if not state_equal(name, live, value):
                 outcome.mismatches.append(f"{write['key']}: {name} does not match the plan")
     outcome.verified = not outcome.mismatches
