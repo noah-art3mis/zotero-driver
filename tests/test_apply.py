@@ -182,11 +182,28 @@ class TestExecution:
         _, entries = read_log(log / "20260719T120000Z-test-change.jsonl")
         assert entries["settings"].status == "applied"
 
-    def test_drifted_setting_marks_failed_and_writes_nothing(self, dirs):
-        # tagColors changed between validate and apply — the plan's old no longer
-        # matches the live value, so the write is refused, not clobbered.
+    def test_settings_write_is_one_put_pinned_to_the_plan(self, dirs):
+        # No preliminary GET: the plan's library-version pin alone guards the
+        # write — a post-validation change bumps the setting past it (412).
         backups, log = dirs
-        drifted = {"value": [{"name": "hand-set", "color": "#000000"}], "version": 95}
+        fake = FakeZotero(
+            items=[make_item("AAAA1111", version=1)],
+            settings={"tagColors": {"value": [], "version": 40}},
+            library_version=100,
+        )
+        settings = {"name": "tagColors", "version": 100, "old": [],
+                    "new": [{"name": "t", "color": "#009E73"}]}
+        ops = [make_op(facet="tags", old=[], new=[{"tag": "t:x", "type": 0}])]
+        run_apply(make_plan(ops, settings=settings), client_for(fake), backups, log, now=NOW)
+        settings_requests = [r for r in fake.requests if "settings/tagColors" in str(r.url)]
+        assert [r.method for r in settings_requests] == ["PUT"]
+        assert settings_requests[0].headers["If-Unmodified-Since-Version"] == "100"
+
+    def test_drifted_setting_marks_failed_and_writes_nothing(self, dirs):
+        # tagColors changed between validate and apply — its version moved past
+        # the plan's pin, so the server refuses the write (412), not clobbered.
+        backups, log = dirs
+        drifted = {"value": [{"name": "hand-set", "color": "#000000"}], "version": 105}
         fake = FakeZotero(
             items=[make_item("AAAA1111", version=1)],
             settings={"tagColors": drifted},
@@ -207,6 +224,19 @@ class TestVerification:
         backups, log = dirs
         fake = FakeZotero(items=[make_item("AAAA1111", version=1)], library_version=100)
         ops = [make_op(facet="tags", old=[], new=[{"tag": "t:x", "type": 0}])]
+        outcome = run_apply(make_plan(ops), client_for(fake), backups, log, now=NOW)
+        assert outcome.verified is True and outcome.mismatches == []
+
+    def test_server_reordered_tags_still_verify(self, dirs):
+        # Zotero stores tags sorted; expand appends. The live list comes back
+        # in a different order than the composed write — that is not a mismatch.
+        backups, log = dirs
+        fake = FakeZotero(
+            items=[make_item("AAAA1111", version=1, tags=[{"tag": "zebra", "type": 1}])],
+            library_version=100,
+        )
+        ops = [make_op(facet="tags", old=[{"tag": "zebra", "type": 1}],
+                       new=[{"tag": "zebra", "type": 1}, {"tag": "t:x", "type": 0}])]
         outcome = run_apply(make_plan(ops), client_for(fake), backups, log, now=NOW)
         assert outcome.verified is True and outcome.mismatches == []
 

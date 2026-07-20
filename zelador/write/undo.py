@@ -16,7 +16,13 @@ from pathlib import Path
 
 from zelador.client import BATCH_SIZE, ZoteroClient, ZoteroError
 from zelador.write.changelog import LogEntry, SessionLog, read_log
-from zelador.write.library_state import facet_field, facet_value, fetch_objects, setting_value
+from zelador.write.library_state import (
+    facet_field,
+    facet_value,
+    fetch_objects,
+    setting_value,
+    state_equal,
+)
 
 
 class UndoRefused(Exception):
@@ -122,7 +128,7 @@ def _reverse_group(key, group: list[LogEntry], data: dict, outcome: UndoOutcome)
         return _reverse_created(key, group, by_facet, data, outcome)
     undo_fields: dict = {}
     for facet, entries in by_facet.items():
-        if facet_value(data, facet) != entries[-1].operation["new"]:
+        if not state_equal(facet, facet_value(data, facet), entries[-1].operation["new"]):
             outcome.conflicts.append(f"{key}: {facet} changed since the apply — left untouched")
             return None
         undo_fields[facet_field(facet)] = entries[0].operation["old"]

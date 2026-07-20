@@ -113,7 +113,7 @@ class TestApply:
         assert result.exit_code == 0, result.output
         outcome = json.loads(result.stdout.strip().splitlines()[-1])
         assert outcome["applied"] == 1 and outcome["verified"] is True
-        assert fake.items[0]["data"]["tags"] == [{"tag": "topic:ai", "type": 0}]
+        assert fake.items[0]["data"]["tags"] == [{"tag": "topic:ai"}]
         assert (tmp_path / "data" / "log" / f"{plan_id}.jsonl").exists()
 
     def test_confirmation_declined_aborts(self, env):
@@ -144,7 +144,7 @@ class TestUndo:
         fake, _ = env
         plan_id = validated_plan(env)
         runner.invoke(cli.app, ["apply", plan_id, "--yes"])
-        assert fake.items[0]["data"]["tags"] == [{"tag": "topic:ai", "type": 0}]
+        assert fake.items[0]["data"]["tags"] == [{"tag": "topic:ai"}]
         result = runner.invoke(cli.app, ["undo", plan_id, "--yes", "--json"])
         assert result.exit_code == 0, result.output
         outcome = json.loads(result.stdout.strip().splitlines()[-1])
@@ -170,7 +170,7 @@ class TestUndo:
         result = runner.invoke(cli.app, ["undo", plan_id, "--dry-run"])
         assert result.exit_code == 0, result.output
         assert [r for r in fake.requests[before:] if r.method in ("POST", "PUT")] == []
-        assert fake.items[0]["data"]["tags"] == [{"tag": "topic:ai", "type": 0}]
+        assert fake.items[0]["data"]["tags"] == [{"tag": "topic:ai"}]
 
 
 class TestReconcile:

@@ -145,7 +145,14 @@ class FakeZotero:
             if request.method == "PUT":
                 return self._write_setting(request, name)
             if name in self.settings:
-                return self._json(self.settings[name])
+                # Single-object request: the header carries the setting's own
+                # version, not the library version (matches the live API).
+                setting = self.settings[name]
+                return httpx.Response(
+                    200,
+                    json=setting,
+                    headers={"Last-Modified-Version": str(setting["version"])},
+                )
             return httpx.Response(404, text="Not found")
         return httpx.Response(404, text=f"no fake route for {path}")
 
@@ -160,7 +167,7 @@ class FakeZotero:
             key = obj["key"]
             existing = by_key.get(key)
             if existing is None:
-                data = {k: v for k, v in obj.items() if k != "version"}
+                data = self._server_form({k: v for k, v in obj.items() if k != "version"})
                 data["version"] = new_version
                 pool.append({"key": key, "version": new_version, "meta": {}, "data": data})
                 success[str(idx)] = key
@@ -171,7 +178,9 @@ class FakeZotero:
                     "message": f"{kind} {key} has been modified since specified version",
                 }
                 continue
-            merged = {**existing["data"], **{k: v for k, v in obj.items() if k != "version"}}
+            merged = self._server_form(
+                {**existing["data"], **{k: v for k, v in obj.items() if k != "version"}}
+            )
             if merged == existing["data"]:
                 unchanged[str(idx)] = key
                 continue
@@ -187,10 +196,25 @@ class FakeZotero:
             headers=self._version_header(),
         )
 
+    @staticmethod
+    def _server_form(data: dict) -> dict:
+        """Zotero stores tags sorted and serializes manual tags without their
+        default type (matches the live API)."""
+        if "tags" in data:
+            data["tags"] = sorted(
+                (
+                    {k: v for k, v in t.items() if not (k == "type" and v == 0)}
+                    for t in data["tags"]
+                ),
+                key=lambda t: t["tag"],
+            )
+        return data
+
     def _write_setting(self, request: httpx.Request, name: str) -> httpx.Response:
         cond = request.headers.get("If-Unmodified-Since-Version")
-        if cond is not None and int(cond) < self.library_version:
-            return httpx.Response(412, text="Library has been modified since specified version")
+        current = self.settings.get(name, {}).get("version", 0)
+        if cond is not None and int(cond) < current:
+            return httpx.Response(412, text="Object has been modified since specified version")
         self.library_version += 1
         value = json.loads(request.content)["value"]
         self.settings[name] = {"value": value, "version": self.library_version}

@@ -98,7 +98,9 @@ class TestWriteSetting:
         assert put.headers["If-Unmodified-Since-Version"] == "42"
 
     def test_stale_version_fails_loudly(self):
-        fake = FakeZotero(library_version=42)
+        fake = FakeZotero(
+            settings={"tagColors": {"value": [], "version": 42}}, library_version=42
+        )
         client = client_for(fake)
         with pytest.raises(ZoteroError, match="412"):
             client.write_setting("tagColors", [], if_unmodified_since=40)
