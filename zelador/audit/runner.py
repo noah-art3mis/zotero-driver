@@ -6,7 +6,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from zelador.audit import completeness, conformance, duplicates, hygiene, report, tagmess
+from zelador import citekeys
+from zelador.audit import citations, completeness, conformance, duplicates, hygiene, report, tagmess
 from zelador.audit.library import Library
 from zelador.client import ZoteroClient
 from zelador.taxonomy import Taxonomy
@@ -30,15 +31,24 @@ def run_audit(
     since: int | None = None,
     style: str = "apa",
     taxonomy: Taxonomy | None = None,
+    citekey_sources: list[str] | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Run all checks (or one), write <check>.json per check plus audit-report.md."""
     checks = dict(CHECKS)
     if taxonomy is not None:
         checks["registry"] = lambda library: conformance.check(library, taxonomy)
+    if citekey_sources:
+        # Sources are scanned only when the check actually runs — a broken
+        # source must not take down an unrelated single-check run.
+        checks["citekeys"] = lambda library: citations.check(
+            library, citekeys.scan_sources(citekey_sources)
+        )
     if check is not None and check not in checks:
         if check == "registry":
             raise UnknownCheck("the registry check needs taxonomy.yaml — copy the example first")
+        if check == "citekeys":
+            raise UnknownCheck("the citekeys check needs citekey_sources in config.yaml")
         raise UnknownCheck(f"unknown check {check!r} — one of: {', '.join(checks)}")
     names = [check] if check else list(checks)
 
