@@ -13,7 +13,7 @@ import secrets
 from collections.abc import Callable
 from datetime import datetime
 
-from zelador.citekeys import CITEKEY_FIELDS, SourceScan, match_entries, pin_line, pinned_citekey
+from zelador.citekeys import SourceScan, match_entries, pin_line, pinned_citekey
 from zelador.client import ZoteroClient
 from zelador.taxonomy import Taxonomy
 from zelador.write.contracts import Changeset, Operation, Plan, plan_id
@@ -54,7 +54,6 @@ def expand(
     for group, intent in enumerate(changeset.intents):
         expander.expand_intent(group, intent)
     expander.check_exclusivity()
-    expander.check_citekey_pins()
     if expander.failures:
         raise ValidationError(expander.failures)
     return Plan(
@@ -394,44 +393,6 @@ class _Expander:
         return False
 
     # -- cross-cutting checks ------------------------------------------------
-
-    def check_citekey_pins(self) -> None:
-        """Citekey-affecting edits on cited-but-unpinned items are refused: Better
-        BibTeX would silently recompute the key every downstream citation joins on.
-        A pin_citekey op anywhere in the same changeset satisfies the guard —
-        checked against final working state, so intent order never matters."""
-        if self.scan is None:
-            return
-        item_citekeys: dict[str, str] = {}
-        ambiguously_cited: dict[str, str] = {}
-        for cited in sorted(self.scan.cited):
-            matched = self.match.item_for.get(cited)
-            if matched is not None:
-                item_citekeys.setdefault(matched, cited)
-            for claimant in self.match.ambiguous.get(cited, ()):
-                ambiguously_cited.setdefault(claimant, cited)
-        facets = {f"field:{name}" for name in CITEKEY_FIELDS}
-        flagged: set[str] = set()
-        for op in self.operations:
-            if op.op != "fill_field" or op.facet not in facets or op.key in flagged:
-                continue
-            citekey = item_citekeys.get(op.key) or ambiguously_cited.get(op.key)
-            if citekey is None:
-                continue
-            if pinned_citekey(self.item_state(op.key).get("extra") or "") is not None:
-                continue
-            flagged.add(op.key)
-            field = op.facet.removeprefix("field:")
-            if op.key in item_citekeys:
-                self.failures.append(
-                    f"item {op.key}: cited as {citekey!r} but unpinned — a {field} edit "
-                    "would recompute its citekey; add a pin_citekey op for it in this changeset"
-                )
-            else:
-                self.failures.append(
-                    f"item {op.key}: cited via bib entry {citekey!r}, which multiple items "
-                    f"claim — resolve the duplicates and pin before editing {field}"
-                )
 
     def check_exclusivity(self) -> None:
         """A write may not introduce a new exclusive-family violation; stock violations
