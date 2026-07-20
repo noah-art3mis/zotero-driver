@@ -240,6 +240,50 @@ class TestVerification:
         outcome = run_apply(make_plan(ops), client_for(fake), backups, log, now=NOW)
         assert outcome.verified is True and outcome.mismatches == []
 
+    def test_create_and_adopt_apply_and_verify(self, dirs):
+        backups, log = dirs
+        fake = FakeZotero(
+            items=[make_item("ATTA1111", version=7, item_type="attachment")],
+            library_version=100,
+            page_size=100,
+        )
+        created = {
+            "itemType": "book",
+            "title": "Far-right publics on Brazilian Telegram",
+            "creators": [{"creatorType": "author", "lastName": "Cesarino"}],
+            "tags": [{"tag": "status:to-read", "type": 0}],
+            "collections": [],
+        }
+        ops = [
+            make_op(op_id="op-001", key="NEWI1111", facet="object", old=None,
+                    new=created, version=0, op="create_item"),
+            make_op(op_id="op-002", key="ATTA1111", facet="parentItem", old=False,
+                    new="NEWI1111", version=7, op="create_item"),
+        ]
+        outcome = run_apply(make_plan(ops), client_for(fake), backups, log, now=NOW)
+        assert outcome.failed == 0 and outcome.verified is True
+        by_key = {i["key"]: i for i in fake.items}
+        assert by_key["NEWI1111"]["data"]["itemType"] == "book"
+        assert by_key["ATTA1111"]["data"]["parentItem"] == "NEWI1111"
+
+    def test_item_type_change_with_cleared_fields_verifies(self, dirs):
+        backups, log = dirs
+        fake = FakeZotero(
+            items=[make_item("AAAA1111", version=1, volume="3")],
+            library_version=100,
+            page_size=100,
+        )
+        ops = [
+            make_op(op_id="op-001", facet="itemType", old="journalArticle", new="book",
+                    op="set_item_type", risk="high"),
+            make_op(op_id="op-002", facet="field:volume", old="3", new="",
+                    op="set_item_type", risk="high"),
+        ]
+        outcome = run_apply(make_plan(ops), client_for(fake), backups, log, now=NOW)
+        assert outcome.failed == 0 and outcome.verified is True
+        assert fake.items[0]["data"]["itemType"] == "book"
+        assert "volume" not in fake.items[0]["data"]
+
     def test_lying_success_is_caught(self, dirs):
         backups, log = dirs
         fake = FakeZotero(items=[make_item("AAAA1111", version=1)], library_version=100)

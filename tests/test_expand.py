@@ -236,6 +236,199 @@ class TestFillField:
         assert plan.operations == []
 
 
+class TestClearField:
+    def test_clearing_writes_empty_and_is_high_risk(self):
+        plan = run_expand(
+            [{"op": "clear_field", "key": "AAAA1111", "field": "DOI"}],
+            items=[make_item("AAAA1111", version=6, DOI="10.1/wrong")],
+        )
+        op = plan.operations[0]
+        assert op.facet == "field:DOI" and op.old == "10.1/wrong" and op.new == ""
+        assert op.risk == "high"
+
+    def test_clearing_an_already_empty_field_is_a_no_op(self):
+        plan = run_expand(
+            [{"op": "clear_field", "key": "AAAA1111", "field": "DOI"}],
+            items=[make_item("AAAA1111")],
+        )
+        assert plan.operations == []
+
+    def test_extra_is_never_a_target(self):
+        assert "extra" in failures_of(
+            [{"op": "clear_field", "key": "AAAA1111", "field": "extra"}],
+            items=[make_item("AAAA1111", extra="citekey")],
+        )
+
+    def test_field_checked_against_item_type_schema(self):
+        assert "publisher" in failures_of(
+            [{"op": "clear_field", "key": "AAAA1111", "field": "publisher"}],
+            items=[make_item("AAAA1111", item_type="journalArticle")],
+        )
+
+
+class TestSetCreators:
+    CREATORS = [{"creatorType": "author", "firstName": "Marcella", "lastName": "Castro"}]
+
+    def test_setting_creators_on_bare_item_is_low_risk(self):
+        plan = run_expand(
+            [{"op": "set_creators", "key": "AAAA1111", "creators": self.CREATORS}],
+            items=[make_item("AAAA1111", version=6)],
+        )
+        op = plan.operations[0]
+        assert op.facet == "creators" and op.old == [] and op.new == self.CREATORS
+        assert op.risk == "low"
+
+    def test_replacing_creators_is_high_risk(self):
+        old = [{"creatorType": "author", "lastName": "Wrong"}]
+        plan = run_expand(
+            [{"op": "set_creators", "key": "AAAA1111", "creators": self.CREATORS}],
+            items=[make_item("AAAA1111", creators=old)],
+        )
+        assert plan.operations[0].risk == "high"
+        assert plan.operations[0].old == old
+
+    def test_same_creators_is_a_no_op(self):
+        plan = run_expand(
+            [{"op": "set_creators", "key": "AAAA1111", "creators": self.CREATORS}],
+            items=[make_item("AAAA1111", creators=list(self.CREATORS))],
+        )
+        assert plan.operations == []
+
+    def test_creator_type_checked_against_item_type_schema(self):
+        creators = [{"creatorType": "recipient", "lastName": "X"}]
+        assert "recipient" in failures_of(
+            [{"op": "set_creators", "key": "AAAA1111", "creators": creators}],
+            items=[make_item("AAAA1111", item_type="journalArticle")],
+        )
+
+
+class TestSetItemType:
+    def test_type_change_emits_high_risk_item_type_facet(self):
+        plan = run_expand(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "book"}],
+            items=[make_item("AAAA1111", version=6)],
+        )
+        op = plan.operations[0]
+        assert op.facet == "itemType" and op.old == "journalArticle" and op.new == "book"
+        assert op.risk == "high"
+
+    def test_fields_invalid_in_new_type_are_cleared_alongside(self):
+        plan = run_expand(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "book"}],
+            items=[make_item("AAAA1111", volume="3", DOI="10.1/x", url="https://x")],
+        )
+        cleared = {op.facet: op.old for op in plan.operations if op.facet != "itemType"}
+        # volume and DOI are journalArticle-only; url is valid for book and survives
+        assert cleared == {"field:volume": "3", "field:DOI": "10.1/x"}
+        assert all(op.new == "" and op.risk == "high" for op in plan.operations
+                   if op.facet != "itemType")
+
+    def test_same_type_is_a_no_op(self):
+        plan = run_expand(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "journalArticle"}],
+            items=[make_item("AAAA1111")],
+        )
+        assert plan.operations == []
+
+    def test_unknown_type_fails(self):
+        assert "notAType" in failures_of(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "notAType"}],
+            items=[make_item("AAAA1111")],
+        )
+
+    def test_creators_invalid_in_new_type_block_the_change(self):
+        creators = [{"creatorType": "editor", "lastName": "X"}]
+        assert "editor" in failures_of(
+            [{"op": "set_item_type", "key": "AAAA1111", "itemType": "webpage"}],
+            items=[make_item("AAAA1111", creators=creators)],
+        )
+
+
+class TestCreateItem:
+    INTENT = {
+        "op": "create_item",
+        "itemType": "book",
+        "fields": {"title": "Reason in Human Affairs", "date": "1983"},
+        "creators": [{"creatorType": "author", "lastName": "Simon"}],
+        "tags": ["status:to-read"],
+    }
+
+    def test_create_emits_object_op_with_generated_key(self):
+        plan = run_expand([{**self.INTENT, "collections": ["COLL1111"]}],
+                          collections=[make_collection("COLL1111", "Projects")])
+        op = plan.operations[0]
+        assert (op.op, op.kind, op.key, op.version, op.facet) == (
+            "create_item", "item", "NEWC0001", 0, "object")
+        assert op.old is None and op.risk == "low"
+        assert op.new["itemType"] == "book" and op.new["title"] == "Reason in Human Affairs"
+        assert op.new["tags"] == [{"tag": "status:to-read", "type": 0}]
+        assert op.new["collections"] == ["COLL1111"]
+        assert op.new["creators"][0]["lastName"] == "Simon"
+
+    def test_fields_checked_against_type(self):
+        bad = {**self.INTENT, "fields": {"publisher": "SUP", "volume": "3"}}
+        assert "volume" in failures_of([bad])
+
+    def test_extra_is_never_a_target(self):
+        bad = {**self.INTENT, "fields": {"title": "T", "extra": "citekey"}}
+        assert "extra" in failures_of([bad])
+
+    def test_tags_must_be_canonical(self):
+        assert "topic:ai" in failures_of([{**self.INTENT, "tags": ["AI"]}])
+
+    def test_exclusive_family_enforced_within_the_new_item(self):
+        bad = {**self.INTENT, "tags": ["status:to-read", "status:read"]}
+        assert "exclusive" in failures_of([bad])
+
+    def test_collections_must_exist(self):
+        assert "COLL1111" in failures_of([{**self.INTENT, "collections": ["COLL1111"]}])
+
+    def test_creators_checked_against_type(self):
+        bad = {**self.INTENT, "creators": [{"creatorType": "recipient", "lastName": "X"}]}
+        assert "recipient" in failures_of([bad])
+
+    def test_unknown_item_type_fails(self):
+        assert "notAType" in failures_of([{**self.INTENT, "itemType": "notAType"}])
+
+
+class TestCreateItemAdoption:
+    def intent(self, attachment="ATTA1111"):
+        return {
+            "op": "create_item",
+            "itemType": "book",
+            "fields": {"title": "Far-right publics on Brazilian Telegram"},
+            "attachment": attachment,
+        }
+
+    def standalone(self, key="ATTA1111", **data):
+        return make_item(key, version=5, item_type="attachment", title="384901eng-3", **data)
+
+    def test_adoption_writes_parent_item_on_the_attachment(self):
+        plan = run_expand([self.intent()], items=[self.standalone()])
+        create, adopt = plan.operations
+        assert create.key == "NEWC0001" and create.facet == "object"
+        assert (adopt.op, adopt.key, adopt.version, adopt.facet) == (
+            "create_item", "ATTA1111", 5, "parentItem")
+        assert adopt.old is False and adopt.new == "NEWC0001" and adopt.risk == "low"
+
+    def test_missing_attachment_fails(self):
+        assert "ATTA1111" in failures_of([self.intent()])
+
+    def test_non_attachment_item_refused(self):
+        assert "not an attachment" in failures_of(
+            [self.intent("AAAA1111")], items=[make_item("AAAA1111")])
+
+    def test_already_parented_attachment_refused(self):
+        items = [self.standalone(parentItem="BBBB2222")]
+        assert "already" in failures_of([self.intent()], items=items)
+
+    def test_trashed_attachment_is_invisible_like_all_trash(self):
+        # expansion reads the live library without trash — a trashed attachment
+        # is unknown, same as for every other op
+        assert "no such item" in failures_of(
+            [self.intent()], items=[self.standalone(deleted=True)])
+
+
 class TestCollectionMembership:
     def test_add_to_collection(self):
         plan = run_expand(

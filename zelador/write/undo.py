@@ -136,24 +136,31 @@ def _reverse_group(key, group: list[LogEntry], data: dict, outcome: UndoOutcome)
 
 
 def _reverse_created(key, group, by_facet, data: dict, outcome: UndoOutcome) -> dict | None:
-    """Undoing a create is a trash by the precomputed key, never a hard delete.
+    """Undoing a create (collection or item) is a trash by the precomputed key,
+    never a hard delete.
 
     The coalesced write carried the composed state — creation values overlaid
-    by any rename/move in the same plan — so verification composes the same way.
+    by any same-plan facet ops — so verification composes the same way.
     """
     expected = dict(by_facet["object"][-1].operation["new"])
     for entry in group:
         facet = entry.operation["facet"]
-        if facet in ("name", "parentCollection"):
-            expected[facet] = entry.operation["new"]
-    matches = (
-        data.get("name") == expected["name"]
-        and data.get("parentCollection", False) == expected["parentCollection"]
-        and not data.get("deleted")
-    )
+        if facet != "object":
+            expected[facet_field(facet)] = entry.operation["new"]
+    matches = not data.get("deleted")
+    for name, value in expected.items():
+        live = data.get(name)
+        if name in ("tags", "collections", "creators"):
+            live = live or []
+        if name in ("parentCollection", "parentItem"):
+            live = data.get(name, False)
+        if live is None and value == "":
+            continue  # the server drops fields written as the empty string
+        if not state_equal(name, live, value):
+            matches = False
     if not matches:
         outcome.conflicts.append(
-            f"{key}: collection no longer matches the state this plan left — left untouched"
+            f"{key}: object no longer matches the state this plan left — left untouched"
         )
         return None
     return {"deleted": True}

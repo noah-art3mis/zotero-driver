@@ -38,6 +38,7 @@ def library() -> FakeZotero:
                 title="Attention is all you need",
                 tags=[{"tag": "AI", "type": 1}, {"tag": "keep-me", "type": 0}],
                 collections=["SHLF1111"],
+                DOI="10.1000/wrong-thesis-doi",
             ),
             make_item(
                 "BBBB2222",
@@ -46,6 +47,7 @@ def library() -> FakeZotero:
                 tags=[{"tag": "Artificial Intelligence", "type": 1}],
             ),
             make_item("CCCC3333", version=11, title="Unrelated", tags=[{"tag": "junk"}]),
+            make_item("DDDD4444", version=13, item_type="attachment", title="bloor-1983.pdf"),
         ],
         collections=[
             make_collection("SHLF1111", "AI shelf", version=3),
