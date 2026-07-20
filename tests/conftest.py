@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import deque
 from urllib.parse import parse_qs, urlparse
 
@@ -90,7 +91,11 @@ class FakeZotero:
         library_version: int = 42,
         page_size: int = 2,
         emit_next_links: bool = True,
+        children: dict | None = None,
+        fulltexts: dict | None = None,
     ):
+        self.children = children or {}  # parent key -> child items
+        self.fulltexts = fulltexts or {}  # attachment key -> extracted text
         self.items = items or []
         self.collections = collections or []
         self.tags = tags or []
@@ -130,6 +135,14 @@ class FakeZotero:
             if request.method == "POST":
                 return self._write(request, self.items, "item")
             return self._items_response(request, params, path)
+        children = re.fullmatch(f"/users/{USER_ID}/items/(\\w+)/children", path)
+        if children:
+            return self._paginated(self.children.get(children.group(1), []), params, path)
+        fulltext = re.fullmatch(f"/users/{USER_ID}/items/(\\w+)/fulltext", path)
+        if fulltext:
+            if fulltext.group(1) in self.fulltexts:
+                return self._json({"content": self.fulltexts[fulltext.group(1)]})
+            return httpx.Response(404, text="Not found")
         if path == f"/users/{USER_ID}/collections":
             if request.method == "POST":
                 return self._write(request, self.collections, "collection")

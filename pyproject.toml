@@ -7,7 +7,10 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28",
+    "pillow>=12.3.0",
     "platformdirs>=4",
+    "pypdf>=6.14.2",
+    "pypdfium2>=5.11.0",
     "python-dotenv>=1",
     "pyyaml>=6",
     "typer>=0.16",
