@@ -39,7 +39,6 @@ def run_expand(
     settings=None,
     taxonomy=TAX,
     library_version=100,
-    scan=None,
 ):
     fake = FakeZotero(
         items=items or [],
@@ -52,9 +51,7 @@ def run_expand(
         Credentials(api_key="k", user_id=USER_ID), transport=fake.transport, sleep=lambda s: None
     )
     changeset = Changeset(slug="test-change", intents=intents)
-    return expand(
-        changeset, client, taxonomy, backup=BACKUP_TS, now=NOW, keygen=keygen(), scan=scan
-    )
+    return expand(changeset, client, taxonomy, backup=BACKUP_TS, now=NOW, keygen=keygen())
 
 
 def failures_of(intents, **kwargs) -> str:

@@ -32,7 +32,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "TAXONOMY_FILE", taxonomy_file)
     fake = FakeZotero(
         items=[
-            make_item("AAAA1111", version=7, tags=[{"tag": "AI", "type": 1}], DOI="10.1/x"),
+            make_item("AAAA1111", version=7, tags=[{"tag": "AI", "type": 1}]),
             make_item("BBBB2222", version=9),
         ],
         collections=[make_collection("COLL1111", "Shelf", version=3)],
@@ -79,18 +79,6 @@ class TestValidate:
         result = runner.invoke(cli.app, ["validate", write_changeset(tmp_path, MERGE)])
         assert result.exit_code == 1
         assert "backup" in result.output
-
-    def test_citekey_sources_flow_into_expansion(self, env, tmp_path, monkeypatch):
-        (tmp_path / "lib.bib").write_text("@article{shannon1948, doi = {10.1/x}}")
-        sources = [str(tmp_path / "lib.bib")]
-        monkeypatch.setattr(
-            config, "load_config", lambda: config.Config(citekey_sources=sources)
-        )
-        assert runner.invoke(cli.app, ["backup"]).exit_code == 0
-        pin = [{"op": "pin_citekey", "key": "AAAA1111"}]
-        result = runner.invoke(cli.app, ["validate", write_changeset(tmp_path, pin), "--json"])
-        assert result.exit_code == 0, result.output
-        assert json.loads(result.stdout.strip().splitlines()[-1])["operations"] == 1
 
     def test_validation_failures_exit_2(self, env, tmp_path):
         runner.invoke(cli.app, ["backup"])

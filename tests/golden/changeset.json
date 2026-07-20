@@ -6,7 +6,6 @@
     {"op": "add_tag", "tag": "status:read", "keys": ["AAAA1111"]},
     {"op": "remove_tag", "tag": "junk", "keys": ["CCCC3333"]},
     {"op": "fill_field", "key": "BBBB2222", "field": "volume", "value": "521"},
-    {"op": "pin_citekey", "key": "AAAA1111"},
     {"op": "create_collection", "name": "archive", "parent": null},
     {"op": "add_to_collection", "collection": "SHLF1111", "keys": ["BBBB2222"]},
     {"op": "rename_collection", "collection": "OLDC2222", "name": "capstone"},
