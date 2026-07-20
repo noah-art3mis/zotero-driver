@@ -161,10 +161,10 @@ def scan_sources(sources: list[str]) -> SourceScan:
     for source in sources:
         pattern = str(Path(source).expanduser())
         if source.endswith(".bib"):
-            for path in _expand(pattern, source):
+            for path in _glob_files(pattern, source):
                 entries.extend(parse_bib(path.read_text(encoding="utf-8", errors="replace")))
             continue
-        for path in _expand(pattern, source, allow_empty=True):
+        for path in _glob_files(pattern, source, allow_empty=True):
             used = scan_text(path.read_text(encoding="utf-8", errors="replace"))
             noted = _NOTE_BASENAME.match(path.name)
             if noted:
@@ -176,7 +176,7 @@ def scan_sources(sources: list[str]) -> SourceScan:
     )
 
 
-def _expand(pattern: str, source: str, allow_empty: bool = False) -> list[Path]:
+def _glob_files(pattern: str, source: str, allow_empty: bool = False) -> list[Path]:
     paths = [Path(p) for p in sorted(globlib.glob(pattern, recursive=True)) if Path(p).is_file()]
     if not paths and not allow_empty:
         raise ConfigError(f"citekey source matches no such file: {source}")
