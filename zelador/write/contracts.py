@@ -17,13 +17,26 @@ from pathlib import Path
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 # Closed operation vocabulary: op -> {field: type spec}. A trailing "?" marks
-# an optional field; specs are "str", "str_list" (non-empty), "str_or_null".
-# Deletes are unrepresentable by construction — trash_* is the only removal.
+# an optional field; specs are "str", "str_list" (non-empty), "str_or_null",
+# "str_map" (non-empty, str -> non-empty str), "creator_list" (Zotero creator
+# objects). Deletes are unrepresentable by construction — trash_* is the only
+# removal.
 OPS: dict[str, dict[str, str]] = {
     "merge_tag": {"from": "str_list", "into": "str"},
     "add_tag": {"tag": "str", "keys": "str_list"},
     "remove_tag": {"tag": "str", "keys": "str_list"},
     "fill_field": {"key": "str", "field": "str", "value": "str"},
+    "clear_field": {"key": "str", "field": "str"},
+    "set_creators": {"key": "str", "creators": "creator_list"},
+    "set_item_type": {"key": "str", "itemType": "str"},
+    "create_item": {
+        "itemType": "str",
+        "fields": "str_map",
+        "creators": "creator_list?",
+        "tags": "str_list?",
+        "collections": "str_list?",
+        "attachment": "str?",
+    },
     "add_to_collection": {"collection": "str", "keys": "str_list"},
     "remove_from_collection": {"collection": "str", "keys": "str_list"},
     "create_collection": {"name": "str", "parent": "str_or_null?"},
@@ -119,6 +132,40 @@ def _check_type(value, kind: str, where: str) -> None:
         not isinstance(value, list) or not value or not all(isinstance(v, str) and v for v in value)
     ):
         raise ChangesetError(f"{where} must be a non-empty list of strings, got {value!r}")
+    elif kind == "str_map" and (
+        not isinstance(value, dict)
+        or not value
+        or not all(isinstance(k, str) and k and isinstance(v, str) and v for k, v in value.items())
+    ):
+        raise ChangesetError(
+            f"{where} must be a non-empty mapping of non-empty strings, got {value!r}"
+        )
+    elif kind == "creator_list":
+        if not isinstance(value, list) or not value:
+            raise ChangesetError(f"{where} must be a non-empty list of creators, got {value!r}")
+        for creator in value:
+            _check_creator(creator, where)
+
+
+def _check_creator(creator, where: str) -> None:
+    """One Zotero creator: creatorType plus either a single `name` or
+    firstName/lastName — never both forms, never other keys."""
+    if not isinstance(creator, dict):
+        raise ChangesetError(f"{where}: creator must be a mapping, got {creator!r}")
+    unknown = set(creator) - {"creatorType", "name", "firstName", "lastName"}
+    if unknown:
+        raise ChangesetError(f"{where}: unknown creator key(s): {', '.join(sorted(unknown))}")
+    if not isinstance(creator.get("creatorType"), str) or not creator["creatorType"]:
+        raise ChangesetError(f"{where}: creator requires a non-empty creatorType")
+    has_name = "name" in creator
+    has_parts = "firstName" in creator or "lastName" in creator
+    if has_name == has_parts:
+        raise ChangesetError(
+            f"{where}: creator takes either name or firstName/lastName, got {creator!r}"
+        )
+    for field in ("name", "firstName", "lastName"):
+        if field in creator and (not isinstance(creator[field], str) or not creator[field]):
+            raise ChangesetError(f"{where}: creator {field} must be a non-empty string")
 
 
 def plan_id(slug: str, now: datetime) -> str:

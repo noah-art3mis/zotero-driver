@@ -91,6 +91,110 @@ class TestChangesetLint:
         assert len(changeset.intents) == 2
 
 
+class TestItemCreationOps:
+    def test_create_item_loads(self, tmp_path):
+        payload = valid_changeset(
+            intents=[
+                {
+                    "op": "create_item",
+                    "itemType": "book",
+                    "fields": {"title": "Reason in Human Affairs", "date": "1983"},
+                    "creators": [
+                        {"creatorType": "author", "firstName": "Herbert A.", "lastName": "Simon"}
+                    ],
+                    "tags": ["status:to-read"],
+                    "collections": ["COLL1111"],
+                    "attachment": "ATTA1111",
+                }
+            ]
+        )
+        changeset = load_changeset(write_changeset(tmp_path, payload))
+        assert changeset.intents[0]["itemType"] == "book"
+
+    def test_create_item_minimal_loads(self, tmp_path):
+        payload = valid_changeset(
+            intents=[{"op": "create_item", "itemType": "book", "fields": {"title": "T"}}]
+        )
+        assert load_changeset(write_changeset(tmp_path, payload)).intents
+
+    def test_create_item_fields_must_be_nonempty_string_map(self, tmp_path):
+        for bad in ({}, {"title": ""}, {"title": 3}, ["title"], "title"):
+            payload = valid_changeset(
+                intents=[{"op": "create_item", "itemType": "book", "fields": bad}]
+            )
+            with pytest.raises(ChangesetError, match="fields"):
+                load_changeset(write_changeset(tmp_path, payload))
+
+    def test_set_item_type_loads(self, tmp_path):
+        payload = valid_changeset(
+            intents=[{"op": "set_item_type", "key": "AAAA1111", "itemType": "conferencePaper"}]
+        )
+        assert load_changeset(write_changeset(tmp_path, payload)).intents
+
+    def test_clear_field_loads(self, tmp_path):
+        payload = valid_changeset(
+            intents=[{"op": "clear_field", "key": "AAAA1111", "field": "DOI"}]
+        )
+        assert load_changeset(write_changeset(tmp_path, payload)).intents
+
+    def test_set_creators_two_name_forms_load(self, tmp_path):
+        payload = valid_changeset(
+            intents=[
+                {
+                    "op": "set_creators",
+                    "key": "AAAA1111",
+                    "creators": [
+                        {"creatorType": "author", "firstName": "Marcella", "lastName": "Castro"},
+                        {"creatorType": "author", "name": "Grupo de Estudos PLN"},
+                    ],
+                }
+            ]
+        )
+        assert load_changeset(write_changeset(tmp_path, payload)).intents
+
+    def test_creator_without_creator_type_refused(self, tmp_path):
+        payload = valid_changeset(
+            intents=[
+                {"op": "set_creators", "key": "AAAA1111", "creators": [{"lastName": "Castro"}]}
+            ]
+        )
+        with pytest.raises(ChangesetError, match="creatorType"):
+            load_changeset(write_changeset(tmp_path, payload))
+
+    def test_creator_mixing_name_forms_refused(self, tmp_path):
+        payload = valid_changeset(
+            intents=[
+                {
+                    "op": "set_creators",
+                    "key": "AAAA1111",
+                    "creators": [{"creatorType": "author", "name": "X", "lastName": "Y"}],
+                }
+            ]
+        )
+        with pytest.raises(ChangesetError, match="name"):
+            load_changeset(write_changeset(tmp_path, payload))
+
+    def test_creator_with_unknown_key_refused(self, tmp_path):
+        payload = valid_changeset(
+            intents=[
+                {
+                    "op": "set_creators",
+                    "key": "AAAA1111",
+                    "creators": [{"creatorType": "author", "lastname": "Castro"}],
+                }
+            ]
+        )
+        with pytest.raises(ChangesetError, match="lastname"):
+            load_changeset(write_changeset(tmp_path, payload))
+
+    def test_empty_creator_list_refused(self, tmp_path):
+        payload = valid_changeset(
+            intents=[{"op": "set_creators", "key": "AAAA1111", "creators": []}]
+        )
+        with pytest.raises(ChangesetError, match="creators"):
+            load_changeset(write_changeset(tmp_path, payload))
+
+
 class TestPlanRoundtrip:
     def make_plan(self) -> Plan:
         op = Operation(
