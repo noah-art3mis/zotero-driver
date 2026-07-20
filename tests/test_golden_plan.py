@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from tests.conftest import USER_ID, FakeZotero, make_collection, make_item
+from zelador.citekeys import BibEntry, SourceScan
 from zelador.client import ZoteroClient
 from zelador.config import Credentials
 from zelador.taxonomy import Family, TagEntry, Taxonomy
@@ -36,6 +37,7 @@ def library() -> FakeZotero:
                 "AAAA1111",
                 version=7,
                 title="Attention is all you need",
+                DOI="10.5555/3295222",
                 tags=[{"tag": "AI", "type": 1}, {"tag": "keep-me", "type": 0}],
                 collections=["SHLF1111"],
             ),
@@ -64,6 +66,12 @@ def build_plan():
     )
     changeset = load_changeset(GOLDEN_DIR / "changeset.json")
     counter = iter(range(1, 100))
+    scan = SourceScan(
+        entries=[
+            BibEntry(citekey="vaswani2017attention", doi="10.5555/3295222", title="", year="")
+        ],
+        cited={"vaswani2017attention": ["vault/draft.md"]},
+    )
     return expand(
         changeset,
         client,
@@ -71,6 +79,7 @@ def build_plan():
         backup="20260719T115900Z",
         now=NOW,
         keygen=lambda: f"NEWC{next(counter):04d}",
+        scan=scan,
     )
 
 

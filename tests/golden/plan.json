@@ -34,6 +34,10 @@
       "value": "521"
     },
     {
+      "op": "pin_citekey",
+      "key": "AAAA1111"
+    },
+    {
       "op": "create_collection",
       "name": "archive",
       "parent": null
@@ -173,6 +177,18 @@
     {
       "id": "op-006",
       "group": 4,
+      "op": "pin_citekey",
+      "kind": "item",
+      "key": "AAAA1111",
+      "version": 7,
+      "facet": "field:extra",
+      "old": "",
+      "new": "Citation Key: vaswani2017attention",
+      "risk": "low"
+    },
+    {
+      "id": "op-007",
+      "group": 5,
       "op": "create_collection",
       "kind": "collection",
       "key": "NEWC0001",
@@ -186,8 +202,8 @@
       "risk": "low"
     },
     {
-      "id": "op-007",
-      "group": 5,
+      "id": "op-008",
+      "group": 6,
       "op": "add_to_collection",
       "kind": "item",
       "key": "BBBB2222",
@@ -200,8 +216,8 @@
       "risk": "low"
     },
     {
-      "id": "op-008",
-      "group": 6,
+      "id": "op-009",
+      "group": 7,
       "op": "rename_collection",
       "kind": "collection",
       "key": "OLDC2222",
@@ -212,8 +228,8 @@
       "risk": "low"
     },
     {
-      "id": "op-009",
-      "group": 7,
+      "id": "op-010",
+      "group": 8,
       "op": "trash_item",
       "kind": "item",
       "key": "CCCC3333",
