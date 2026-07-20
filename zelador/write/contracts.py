@@ -24,7 +24,6 @@ OPS: dict[str, dict[str, str]] = {
     "add_tag": {"tag": "str", "keys": "str_list"},
     "remove_tag": {"tag": "str", "keys": "str_list"},
     "fill_field": {"key": "str", "field": "str", "value": "str"},
-    "pin_citekey": {"key": "str"},
     "add_to_collection": {"collection": "str", "keys": "str_list"},
     "remove_from_collection": {"collection": "str", "keys": "str_list"},
     "create_collection": {"name": "str", "parent": "str_or_null?"},

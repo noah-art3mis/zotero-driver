@@ -13,7 +13,6 @@ import secrets
 from collections.abc import Callable
 from datetime import datetime
 
-from zelador.citekeys import SourceScan, match_entries, pin_line, pinned_citekey
 from zelador.client import ZoteroClient
 from zelador.taxonomy import Taxonomy
 from zelador.write.contracts import Changeset, Operation, Plan, plan_id
@@ -40,7 +39,6 @@ def expand(
     backup: str,
     now: datetime,
     keygen: Callable[[], str] | None = None,
-    scan: SourceScan | None = None,
 ) -> Plan:
     """Expand a changeset against the live library; raises ValidationError on any failure."""
     items = client.all_items()
@@ -50,7 +48,7 @@ def expand(
     library_version = client.last_modified_version
     assert library_version is not None
     tag_colors = client.setting("tagColors")
-    expander = _Expander(client, items, collections, taxonomy, keygen or _generate_key, scan)
+    expander = _Expander(client, items, collections, taxonomy, keygen or _generate_key)
     for group, intent in enumerate(changeset.intents):
         expander.expand_intent(group, intent)
     expander.check_exclusivity()
@@ -79,12 +77,10 @@ def _settings_drift(taxonomy: Taxonomy | None, live_setting, library_version: in
 
 
 class _Expander:
-    def __init__(self, client, items, collections, taxonomy, keygen, scan=None):
+    def __init__(self, client, items, collections, taxonomy, keygen):
         self.client = client
         self.taxonomy = taxonomy
         self.keygen = keygen
-        self.scan = scan
-        self.match = match_entries(scan.entries, items) if scan else None
         self.items = items
         self.items_by_key = {i["key"]: i for i in items}
         self.colls_by_key = {c["key"]: c for c in collections}
@@ -224,7 +220,8 @@ class _Expander:
         if data is None:
             return
         if field == "extra":
-            self.fail(where, "'extra' is never a fill_field target — pin_citekey owns it")
+            self.fail(where, "'extra' is never a fill_field target — it is plugin territory "
+                             "(Better BibTeX pins citekeys there)")
             return
         valid = self.client.item_type_fields(data["itemType"])
         if field not in valid:
@@ -237,58 +234,6 @@ class _Expander:
         risk = "low" if not old else "high"
         self.emit(group, "fill_field", "item", key, version, f"field:{field}", old, value, risk)
         data[field] = value
-
-    def _pin_citekey(self, group: int, where: str, intent: dict) -> None:
-        key = intent["key"]
-        data = self.require_item(key, where)
-        if data is None:
-            return
-        if self.scan is None:
-            self.fail(where, "pin_citekey needs citekey_sources configured in config.yaml")
-            return
-        citekey = self._resolve_citekey(key, where)
-        if citekey is None:
-            return
-        existing = pinned_citekey(data.get("extra") or "")
-        if existing == citekey:
-            return
-        if existing is not None:
-            self.fail(
-                where,
-                f"item {key} already pins citekey {existing!r} — "
-                f"refusing to overwrite with {citekey!r}",
-            )
-            return
-        old = data.get("extra") or ""
-        kept = old.rstrip("\n")
-        new = f"{kept}\n{pin_line(citekey)}" if kept else pin_line(citekey)
-        version = self.items_by_key[key]["version"]
-        self.emit(group, "pin_citekey", "item", key, version, "field:extra", old, new, "low")
-        data["extra"] = new
-
-    def _resolve_citekey(self, key: str, where: str) -> str | None:
-        """The bib entry this item resolves to — the export is the citekey authority."""
-        claims = sorted(ck for ck, item in self.match.item_for.items() if item == key)
-        if len(claims) > 1:
-            self.fail(
-                where,
-                f"item {key} is matched by multiple bib entries: {', '.join(claims)} — "
-                "the bib export has duplicates",
-            )
-            return None
-        if claims:
-            return claims[0]
-        collisions = sorted(ck for ck, keys in self.match.ambiguous.items() if key in keys)
-        if collisions:
-            others = ", ".join(self.match.ambiguous[collisions[0]])
-            self.fail(
-                where,
-                f"bib entry {collisions[0]!r} is claimed by multiple items ({others}) — "
-                "resolve the duplicates first",
-            )
-        else:
-            self.fail(where, f"no bib entry matches item {key} by DOI or title+year")
-        return None
 
     def _trash_item(self, group: int, where: str, intent: dict) -> None:
         key = intent["key"]

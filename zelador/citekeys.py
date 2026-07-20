@@ -70,10 +70,6 @@ def pinned_citekey(extra: str) -> str | None:
     return None
 
 
-def pin_line(citekey: str) -> str:
-    return f"Citation Key: {citekey}"
-
-
 # -- bib parsing -------------------------------------------------------------
 
 
