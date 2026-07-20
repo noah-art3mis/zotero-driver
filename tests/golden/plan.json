@@ -53,6 +53,49 @@
     {
       "op": "trash_item",
       "key": "CCCC3333"
+    },
+    {
+      "op": "clear_field",
+      "key": "AAAA1111",
+      "field": "DOI"
+    },
+    {
+      "op": "set_creators",
+      "key": "BBBB2222",
+      "creators": [
+        {
+          "creatorType": "author",
+          "firstName": "Ian",
+          "lastName": "Goodfellow"
+        }
+      ]
+    },
+    {
+      "op": "set_item_type",
+      "key": "BBBB2222",
+      "itemType": "book"
+    },
+    {
+      "op": "create_item",
+      "itemType": "book",
+      "fields": {
+        "title": "Wittgenstein: A Social Theory of Knowledge",
+        "date": "1983"
+      },
+      "creators": [
+        {
+          "creatorType": "author",
+          "firstName": "David",
+          "lastName": "Bloor"
+        }
+      ],
+      "tags": [
+        "status:to-read"
+      ],
+      "collections": [
+        "SHLF1111"
+      ],
+      "attachment": "DDDD4444"
     }
   ],
   "operations": [
@@ -222,6 +265,104 @@
       "old": false,
       "new": true,
       "risk": "high"
+    },
+    {
+      "id": "op-010",
+      "group": 8,
+      "op": "clear_field",
+      "kind": "item",
+      "key": "AAAA1111",
+      "version": 7,
+      "facet": "field:DOI",
+      "old": "10.1000/wrong-thesis-doi",
+      "new": "",
+      "risk": "high"
+    },
+    {
+      "id": "op-011",
+      "group": 9,
+      "op": "set_creators",
+      "kind": "item",
+      "key": "BBBB2222",
+      "version": 9,
+      "facet": "creators",
+      "old": [],
+      "new": [
+        {
+          "creatorType": "author",
+          "firstName": "Ian",
+          "lastName": "Goodfellow"
+        }
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "op-012",
+      "group": 10,
+      "op": "set_item_type",
+      "kind": "item",
+      "key": "BBBB2222",
+      "version": 9,
+      "facet": "itemType",
+      "old": "journalArticle",
+      "new": "book",
+      "risk": "high"
+    },
+    {
+      "id": "op-013",
+      "group": 10,
+      "op": "set_item_type",
+      "kind": "item",
+      "key": "BBBB2222",
+      "version": 9,
+      "facet": "field:volume",
+      "old": "521",
+      "new": "",
+      "risk": "high"
+    },
+    {
+      "id": "op-014",
+      "group": 11,
+      "op": "create_item",
+      "kind": "item",
+      "key": "NEWC0002",
+      "version": 0,
+      "facet": "object",
+      "old": null,
+      "new": {
+        "itemType": "book",
+        "title": "Wittgenstein: A Social Theory of Knowledge",
+        "date": "1983",
+        "tags": [
+          {
+            "tag": "status:to-read",
+            "type": 0
+          }
+        ],
+        "collections": [
+          "SHLF1111"
+        ],
+        "creators": [
+          {
+            "creatorType": "author",
+            "firstName": "David",
+            "lastName": "Bloor"
+          }
+        ]
+      },
+      "risk": "low"
+    },
+    {
+      "id": "op-015",
+      "group": 11,
+      "op": "create_item",
+      "kind": "item",
+      "key": "DDDD4444",
+      "version": 13,
+      "facet": "parentItem",
+      "old": false,
+      "new": "NEWC0002",
+      "risk": "low"
     }
   ],
   "settings": {
