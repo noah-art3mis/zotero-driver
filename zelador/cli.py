@@ -94,7 +94,7 @@ def audit(
     check: Annotated[
         str | None,
         typer.Argument(
-            help="Run one check: completeness, tags, collections, duplicates, registry."
+            help="Run one check: completeness, tags, collections, duplicates, registry, citekeys."
         ),
     ] = None,
     since: Annotated[
@@ -104,7 +104,8 @@ def audit(
 ):
     """Run all audit checks (or one); write JSON per check + audit-report.md.
 
-    The registry check runs only when taxonomy.yaml exists.
+    The registry check runs only when taxonomy.yaml exists; the citekeys
+    check only when config.yaml sets citekey_sources.
 
     Examples:
         zel audit
@@ -127,6 +128,7 @@ def audit(
                 since=since,
                 style=cfg.style,
                 taxonomy=registry,
+                citekey_sources=cfg.citekey_sources or None,
             )
         except audit_runner.UnknownCheck as exc:
             raise typer.BadParameter(str(exc)) from None

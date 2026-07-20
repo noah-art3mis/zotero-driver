@@ -80,3 +80,32 @@ class TestRunAudit:
     def test_registry_check_without_taxonomy_is_unknown(self, fake, tmp_path):
         with pytest.raises(runner.UnknownCheck, match="taxonomy.yaml"):
             runner.run_audit(client_for(fake), tmp_path, check="registry")
+
+    def test_citekeys_check_runs_when_sources_given(self, fake, tmp_path):
+        (tmp_path / "lib.bib").write_text("@article{gone1900, title={Vanished}, year={1900}}")
+        (tmp_path / "draft.md").write_text("Cites [[@gone1900]] and [[@ghost2024]].")
+        summary = runner.run_audit(
+            client_for(fake),
+            tmp_path,
+            citekey_sources=[str(tmp_path / "lib.bib"), str(tmp_path / "draft.md")],
+            now=NOW,
+        )
+        payload = json.loads((tmp_path / "citekeys.json").read_text())
+        kinds = {f["kind"] for f in payload["findings"]}
+        assert summary["counts"]["citekeys"] == 2
+        assert kinds == {"orphaned_citation", "unmatched_entry"}
+
+    def test_citekeys_check_without_sources_is_unknown(self, fake, tmp_path):
+        with pytest.raises(runner.UnknownCheck, match="citekey_sources"):
+            runner.run_audit(client_for(fake), tmp_path, check="citekeys")
+
+    def test_other_single_check_never_scans_sources(self, fake, tmp_path):
+        # A configured-but-broken source must not break an unrelated check.
+        summary = runner.run_audit(
+            client_for(fake),
+            tmp_path,
+            check="tags",
+            citekey_sources=[str(tmp_path / "gone.bib")],
+            now=NOW,
+        )
+        assert list(summary["counts"]) == ["tags"]

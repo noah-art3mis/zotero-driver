@@ -71,6 +71,30 @@ class TestAuditCommand:
         result = runner.invoke(cli.app, ["audit", "registry"])
         assert result.exit_code == 2
 
+    def test_citekeys_check_included_when_sources_configured(self, fake, monkeypatch, tmp_path):
+        (tmp_path / "draft.md").write_text("Cites [[@ghost2024]].")
+        monkeypatch.setattr(
+            cli.config,
+            "load_config",
+            lambda: config.Config(citekey_sources=[str(tmp_path / "draft.md")]),
+        )
+        result = runner.invoke(cli.app, ["audit", "--json"])
+        summary = json.loads(result.stdout.strip())
+        assert summary["counts"]["citekeys"] == 1  # ghost2024 has no bib entry
+
+    def test_citekeys_check_without_sources_is_bad_input(self, fake):
+        result = runner.invoke(cli.app, ["audit", "citekeys"])
+        assert result.exit_code == 2
+
+    def test_missing_bib_source_is_operational_failure(self, fake, monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            cli.config,
+            "load_config",
+            lambda: config.Config(citekey_sources=[str(tmp_path / "gone.bib")]),
+        )
+        result = runner.invoke(cli.app, ["audit"])
+        assert result.exit_code == 1
+
     def test_broken_registry_is_operational_failure(self, fake, monkeypatch, tmp_path):
         registry = tmp_path / "taxonomy.yaml"
         registry.write_text(

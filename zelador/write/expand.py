@@ -13,6 +13,7 @@ import secrets
 from collections.abc import Callable
 from datetime import datetime
 
+from zelador.citekeys import CITEKEY_FIELDS, SourceScan, match_entries, pin_line, pinned_citekey
 from zelador.client import ZoteroClient
 from zelador.taxonomy import Taxonomy
 from zelador.write.contracts import Changeset, Operation, Plan, plan_id
@@ -39,6 +40,7 @@ def expand(
     backup: str,
     now: datetime,
     keygen: Callable[[], str] | None = None,
+    scan: SourceScan | None = None,
 ) -> Plan:
     """Expand a changeset against the live library; raises ValidationError on any failure."""
     items = client.all_items()
@@ -48,10 +50,11 @@ def expand(
     library_version = client.last_modified_version
     assert library_version is not None
     tag_colors = client.setting("tagColors")
-    expander = _Expander(client, items, collections, taxonomy, keygen or _generate_key)
+    expander = _Expander(client, items, collections, taxonomy, keygen or _generate_key, scan)
     for group, intent in enumerate(changeset.intents):
         expander.expand_intent(group, intent)
     expander.check_exclusivity()
+    expander.check_citekey_pins()
     if expander.failures:
         raise ValidationError(expander.failures)
     return Plan(
@@ -77,10 +80,12 @@ def _settings_drift(taxonomy: Taxonomy | None, live_setting, library_version: in
 
 
 class _Expander:
-    def __init__(self, client, items, collections, taxonomy, keygen):
+    def __init__(self, client, items, collections, taxonomy, keygen, scan=None):
         self.client = client
         self.taxonomy = taxonomy
         self.keygen = keygen
+        self.scan = scan
+        self.match = match_entries(scan.entries, items) if scan else None
         self.items = items
         self.items_by_key = {i["key"]: i for i in items}
         self.colls_by_key = {c["key"]: c for c in collections}
@@ -235,7 +240,56 @@ class _Expander:
         data[field] = value
 
     def _pin_citekey(self, group: int, where: str, intent: dict) -> None:
-        self.fail(where, "pin_citekey expansion lands with the citekey machinery (M3c)")
+        key = intent["key"]
+        data = self.require_item(key, where)
+        if data is None:
+            return
+        if self.scan is None:
+            self.fail(where, "pin_citekey needs citekey_sources configured in config.yaml")
+            return
+        citekey = self._resolve_citekey(key, where)
+        if citekey is None:
+            return
+        existing = pinned_citekey(data.get("extra") or "")
+        if existing == citekey:
+            return
+        if existing is not None:
+            self.fail(
+                where,
+                f"item {key} already pins citekey {existing!r} — "
+                f"refusing to overwrite with {citekey!r}",
+            )
+            return
+        old = data.get("extra") or ""
+        kept = old.rstrip("\n")
+        new = f"{kept}\n{pin_line(citekey)}" if kept else pin_line(citekey)
+        version = self.items_by_key[key]["version"]
+        self.emit(group, "pin_citekey", "item", key, version, "field:extra", old, new, "low")
+        data["extra"] = new
+
+    def _resolve_citekey(self, key: str, where: str) -> str | None:
+        """The bib entry this item resolves to — the export is the citekey authority."""
+        claims = sorted(ck for ck, item in self.match.item_for.items() if item == key)
+        if len(claims) > 1:
+            self.fail(
+                where,
+                f"item {key} is matched by multiple bib entries: {', '.join(claims)} — "
+                "the bib export has duplicates",
+            )
+            return None
+        if claims:
+            return claims[0]
+        collisions = sorted(ck for ck, keys in self.match.ambiguous.items() if key in keys)
+        if collisions:
+            others = ", ".join(self.match.ambiguous[collisions[0]])
+            self.fail(
+                where,
+                f"bib entry {collisions[0]!r} is claimed by multiple items ({others}) — "
+                "resolve the duplicates first",
+            )
+        else:
+            self.fail(where, f"no bib entry matches item {key} by DOI or title+year")
+        return None
 
     def _trash_item(self, group: int, where: str, intent: dict) -> None:
         key = intent["key"]
@@ -340,6 +394,44 @@ class _Expander:
         return False
 
     # -- cross-cutting checks ------------------------------------------------
+
+    def check_citekey_pins(self) -> None:
+        """Citekey-affecting edits on cited-but-unpinned items are refused: Better
+        BibTeX would silently recompute the key every downstream citation joins on.
+        A pin_citekey op anywhere in the same changeset satisfies the guard —
+        checked against final working state, so intent order never matters."""
+        if self.scan is None:
+            return
+        item_citekeys: dict[str, str] = {}
+        ambiguously_cited: dict[str, str] = {}
+        for cited in sorted(self.scan.cited):
+            matched = self.match.item_for.get(cited)
+            if matched is not None:
+                item_citekeys.setdefault(matched, cited)
+            for claimant in self.match.ambiguous.get(cited, ()):
+                ambiguously_cited.setdefault(claimant, cited)
+        facets = {f"field:{name}" for name in CITEKEY_FIELDS}
+        flagged: set[str] = set()
+        for op in self.operations:
+            if op.op != "fill_field" or op.facet not in facets or op.key in flagged:
+                continue
+            citekey = item_citekeys.get(op.key) or ambiguously_cited.get(op.key)
+            if citekey is None:
+                continue
+            if pinned_citekey(self.item_state(op.key).get("extra") or "") is not None:
+                continue
+            flagged.add(op.key)
+            field = op.facet.removeprefix("field:")
+            if op.key in item_citekeys:
+                self.failures.append(
+                    f"item {op.key}: cited as {citekey!r} but unpinned — a {field} edit "
+                    "would recompute its citekey; add a pin_citekey op for it in this changeset"
+                )
+            else:
+                self.failures.append(
+                    f"item {op.key}: cited via bib entry {citekey!r}, which multiple items "
+                    f"claim — resolve the duplicates and pin before editing {field}"
+                )
 
     def check_exclusivity(self) -> None:
         """A write may not introduce a new exclusive-family violation; stock violations

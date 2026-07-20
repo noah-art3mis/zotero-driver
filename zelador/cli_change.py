@@ -13,7 +13,7 @@ from typing import Annotated
 import typer
 
 from zelador import backup as backup_mod
-from zelador import config
+from zelador import citekeys, config
 from zelador import taxonomy as taxonomy_mod
 from zelador.output import emit_ndjson, note
 from zelador.write import apply as apply_mod
@@ -71,9 +71,16 @@ def validate(
             if config.TAXONOMY_FILE.exists()
             else None
         )
+        sources = config.load_config().citekey_sources
+        scan = citekeys.scan_sources(sources) if sources else None
         try:
             plan = expand(
-                parsed, _cli().make_client(), registry, backup=info.timestamp, now=datetime.now(UTC)
+                parsed,
+                _cli().make_client(),
+                registry,
+                backup=info.timestamp,
+                now=datetime.now(UTC),
+                scan=scan,
             )
         except ValidationError as exc:
             for failure in exc.failures:

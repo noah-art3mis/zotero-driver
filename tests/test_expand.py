@@ -39,6 +39,7 @@ def run_expand(
     settings=None,
     taxonomy=TAX,
     library_version=100,
+    scan=None,
 ):
     fake = FakeZotero(
         items=items or [],
@@ -51,7 +52,9 @@ def run_expand(
         Credentials(api_key="k", user_id=USER_ID), transport=fake.transport, sleep=lambda s: None
     )
     changeset = Changeset(slug="test-change", intents=intents)
-    return expand(changeset, client, taxonomy, backup=BACKUP_TS, now=NOW, keygen=keygen())
+    return expand(
+        changeset, client, taxonomy, backup=BACKUP_TS, now=NOW, keygen=keygen(), scan=scan
+    )
 
 
 def failures_of(intents, **kwargs) -> str:
@@ -234,13 +237,6 @@ class TestFillField:
             items=[make_item("AAAA1111", volume="12")],
         )
         assert plan.operations == []
-
-
-class TestPinCitekey:
-    def test_refused_until_m3c(self):
-        assert "M3c" in failures_of(
-            [{"op": "pin_citekey", "key": "AAAA1111"}], items=[make_item("AAAA1111")]
-        )
 
 
 class TestCollectionMembership:
