@@ -52,6 +52,7 @@ class ZoteroClient:
         self._trace = trace
         self._pending_backoff = 0.0
         self._field_cache: dict[str, set[str]] = {}
+        self._creator_cache: dict[str, set[str]] = {}
         self.last_modified_version: int | None = None
         self._http = httpx.Client(
             base_url=API_BASE,
@@ -279,6 +280,13 @@ class ZoteroClient:
             data = self._get("/itemTypeFields", params={"itemType": item_type}).json()
             self._field_cache[item_type] = {f["field"] for f in data}
         return self._field_cache[item_type]
+
+    def item_type_creator_types(self, item_type: str) -> set[str]:
+        """Valid creator types for an item type (/itemTypeCreatorTypes), cached per session."""
+        if item_type not in self._creator_cache:
+            data = self._get("/itemTypeCreatorTypes", params={"itemType": item_type}).json()
+            self._creator_cache[item_type] = {c["creatorType"] for c in data}
+        return self._creator_cache[item_type]
 
     def raw(self, path_suffix: str):
         """Raw user-scoped GET for `zel debug probe` — returns the parsed JSON body."""

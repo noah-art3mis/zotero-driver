@@ -76,6 +76,45 @@ ITEM_TYPE_FIELDS = {
     ],
     "book": ["title", "abstractNote", "publisher", "date", "url", "extra"],
     "webpage": ["title", "websiteTitle", "date", "url", "extra"],
+    "conferencePaper": [
+        "title",
+        "abstractNote",
+        "proceedingsTitle",
+        "conferenceName",
+        "pages",
+        "date",
+        "DOI",
+        "url",
+        "extra",
+    ],
+}
+
+# The subset of /itemTypeCreatorTypes the tests exercise.
+ITEM_TYPE_CREATOR_TYPES = {
+    "journalArticle": ["author", "contributor", "editor"],
+    "book": ["author", "contributor", "editor"],
+    "webpage": ["author", "contributor"],
+    "conferencePaper": ["author", "contributor", "editor"],
+}
+
+# Item data keys that are not per-type fields and always pass server validation.
+ITEM_BASE_KEYS = {
+    "key",
+    "version",
+    "itemType",
+    "creators",
+    "tags",
+    "collections",
+    "relations",
+    "deleted",
+    "dateAdded",
+    "dateModified",
+    "parentItem",
+    "linkMode",
+    "contentType",
+    "filename",
+    "charset",
+    "note",
 }
 
 
@@ -131,6 +170,11 @@ class FakeZotero:
             if fields is None:
                 return httpx.Response(400, text="Invalid item type")
             return self._json([{"field": f, "localized": f} for f in fields])
+        if path == "/itemTypeCreatorTypes":
+            creator_types = ITEM_TYPE_CREATOR_TYPES.get(params.get("itemType", ""))
+            if creator_types is None:
+                return httpx.Response(400, text="Invalid item type")
+            return self._json([{"creatorType": c, "localized": c} for c in creator_types])
         if path == f"/users/{USER_ID}/items":
             if request.method == "POST":
                 return self._write(request, self.items, "item")
@@ -181,6 +225,10 @@ class FakeZotero:
             existing = by_key.get(key)
             if existing is None:
                 data = self._server_form({k: v for k, v in obj.items() if k != "version"})
+                error = self._validate_item(data) if kind == "item" else None
+                if error:
+                    failed[str(idx)] = {"code": 400, "message": error}
+                    continue
                 data["version"] = new_version
                 pool.append({"key": key, "version": new_version, "meta": {}, "data": data})
                 success[str(idx)] = key
@@ -194,6 +242,10 @@ class FakeZotero:
             merged = self._server_form(
                 {**existing["data"], **{k: v for k, v in obj.items() if k != "version"}}
             )
+            error = self._validate_item(merged) if kind == "item" else None
+            if error:
+                failed[str(idx)] = {"code": 400, "message": error}
+                continue
             if merged == existing["data"]:
                 unchanged[str(idx)] = key
                 continue
@@ -210,9 +262,31 @@ class FakeZotero:
         )
 
     @staticmethod
+    def _validate_item(data: dict) -> str | None:
+        """The live server validates the merged object: every stored field must be
+        valid for the (possibly just-changed) item type, creators included."""
+        item_type = data.get("itemType")
+        if item_type == "attachment":
+            return None
+        known = ITEM_TYPE_FIELDS.get(item_type or "")
+        if known is None:
+            return f"'{item_type}' is not a valid item type"
+        for name in data:
+            if name not in ITEM_BASE_KEYS and name not in known:
+                return f"invalid field '{name}' for type '{item_type}'"
+        for creator in data.get("creators", []):
+            if creator.get("creatorType") not in ITEM_TYPE_CREATOR_TYPES.get(item_type, []):
+                return (
+                    f"invalid creator type '{creator.get('creatorType')}' "
+                    f"for type '{item_type}'"
+                )
+        return None
+
+    @staticmethod
     def _server_form(data: dict) -> dict:
-        """Zotero stores tags sorted and serializes manual tags without their
-        default type (matches the live API)."""
+        """Zotero stores tags sorted, serializes manual tags without their default
+        type, and drops fields written as the empty string (matches the live API)."""
+        data = {k: v for k, v in data.items() if v != ""}
         if "tags" in data:
             data["tags"] = sorted(
                 (

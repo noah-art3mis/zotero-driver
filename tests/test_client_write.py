@@ -122,6 +122,81 @@ class TestItemTypeFields:
             client.item_type_fields("notAType")
 
 
+class TestItemTypeCreatorTypes:
+    def test_fetches_and_caches_per_session(self):
+        fake = FakeZotero()
+        client = client_for(fake)
+        types = client.item_type_creator_types("journalArticle")
+        assert "author" in types
+        client.item_type_creator_types("journalArticle")
+        assert len([r for r in fake.requests if "itemTypeCreatorTypes" in str(r.url)]) == 1
+
+    def test_unknown_type_fails_loudly(self):
+        fake = FakeZotero()
+        client = client_for(fake)
+        with pytest.raises(ZoteroError, match="400"):
+            client.item_type_creator_types("notAType")
+
+
+class TestItemWriteServerValidation:
+    """The fake must model the live server's item validation, not echo writes back."""
+
+    def test_create_with_client_key_and_version_zero(self):
+        fake = FakeZotero(library_version=10)
+        client = client_for(fake)
+        write = {
+            "key": "NEWI1111",
+            "version": 0,
+            "itemType": "book",
+            "title": "Reason in Human Affairs",
+            "creators": [{"creatorType": "author", "lastName": "Simon"}],
+            "tags": [{"tag": "status:to-read", "type": 0}],
+        }
+        result = client.write_items([write])
+        assert result.applied == {"NEWI1111": 11}
+        created = next(i for i in fake.items if i["key"] == "NEWI1111")
+        assert created["data"]["itemType"] == "book"
+        assert created["data"]["creators"][0]["lastName"] == "Simon"
+
+    def test_empty_string_fields_are_dropped_on_store(self):
+        fake = FakeZotero(items=[make_item("AAAA1111", version=3, volume="3")])
+        client = client_for(fake)
+        result = client.write_items([{"key": "AAAA1111", "version": 3, "volume": ""}])
+        assert "AAAA1111" in result.applied
+        assert "volume" not in fake.items[0]["data"]
+
+    def test_type_change_leaving_invalid_field_fails(self):
+        fake = FakeZotero(items=[make_item("AAAA1111", version=3, volume="3")])
+        client = client_for(fake)
+        result = client.write_items([{"key": "AAAA1111", "version": 3, "itemType": "book"}])
+        assert "volume" in result.failed["AAAA1111"]["message"]
+        assert fake.items[0]["data"]["itemType"] == "journalArticle"  # nothing written
+
+    def test_type_change_with_explicit_clears_succeeds(self):
+        fake = FakeZotero(items=[make_item("AAAA1111", version=3, volume="3")])
+        client = client_for(fake)
+        result = client.write_items(
+            [{"key": "AAAA1111", "version": 3, "itemType": "book", "volume": ""}]
+        )
+        assert "AAAA1111" in result.applied
+        assert fake.items[0]["data"]["itemType"] == "book"
+        assert "volume" not in fake.items[0]["data"]
+
+    def test_invalid_creator_type_fails(self):
+        fake = FakeZotero(items=[make_item("AAAA1111", version=3)])
+        client = client_for(fake)
+        result = client.write_items(
+            [
+                {
+                    "key": "AAAA1111",
+                    "version": 3,
+                    "creators": [{"creatorType": "recipient", "lastName": "X"}],
+                }
+            ]
+        )
+        assert "recipient" in result.failed["AAAA1111"]["message"]
+
+
 class TestBatchReadsForWrites:
     def test_collections_batch_by_key(self):
         fake = FakeZotero(
