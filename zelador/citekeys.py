@@ -19,10 +19,6 @@ from zelador.audit.duplicates import normalize_doi
 from zelador.audit.library import NON_BIBLIOGRAPHIC
 from zelador.config import ConfigError
 
-# fill_field targets Better BibTeX derives citekeys from (creators are not a
-# fill_field target, so the guard rule only needs these two)
-CITEKEY_FIELDS = ("title", "date")
-
 _ENTRY_START = re.compile(r"@(\w+)\s*\{")
 _NON_ENTRIES = {"comment", "preamble", "string"}
 _FIELD = re.compile(r"(\w+)\s*=\s*")

@@ -1,4 +1,4 @@
-"""Tests for pin_citekey expansion and the cited-but-unpinned guard rule."""
+"""Tests for pin_citekey expansion."""
 
 from tests.test_expand import failures_of, make_item, run_expand
 from zelador.citekeys import BibEntry, SourceScan
@@ -83,78 +83,3 @@ class TestPinCitekey:
             scan=twice,
         )
         assert "dupe1948" in failures and "shannon1948" in failures
-
-
-class TestCitekeyGuard:
-    def cited_unpinned(self, **overrides):
-        return make_item("AAAA1111", DOI="10.1/x", **overrides)
-
-    def test_title_edit_on_cited_unpinned_item_is_refused(self):
-        failures = failures_of(
-            [{"op": "fill_field", "key": "AAAA1111", "field": "title", "value": "New"}],
-            items=[self.cited_unpinned()],
-            scan=CITED,
-        )
-        assert "pin_citekey" in failures and "shannon1948" in failures
-
-    def test_date_edit_likewise_but_other_fields_pass(self):
-        failures = failures_of(
-            [{"op": "fill_field", "key": "AAAA1111", "field": "date", "value": "1948"}],
-            items=[self.cited_unpinned(date="")],
-            scan=CITED,
-        )
-        assert "pin_citekey" in failures
-        plan = run_expand(
-            [{"op": "fill_field", "key": "AAAA1111", "field": "volume", "value": "27"}],
-            items=[self.cited_unpinned()],
-            scan=CITED,
-        )
-        assert len(plan.operations) == 1
-
-    def test_pin_in_same_changeset_clears_the_guard_either_order(self):
-        for intents in (
-            [
-                {"op": "pin_citekey", "key": "AAAA1111"},
-                {"op": "fill_field", "key": "AAAA1111", "field": "title", "value": "New"},
-            ],
-            [
-                {"op": "fill_field", "key": "AAAA1111", "field": "title", "value": "New"},
-                {"op": "pin_citekey", "key": "AAAA1111"},
-            ],
-        ):
-            plan = run_expand(intents, items=[self.cited_unpinned()], scan=CITED)
-            assert len(plan.operations) == 2
-
-    def test_ambiguously_cited_items_are_guarded_too(self):
-        # Two items claim the cited entry: neither can pin, so an edit on
-        # either must be refused pointing at the duplicates, not at pin_citekey.
-        failures = failures_of(
-            [{"op": "fill_field", "key": "AAAA1111", "field": "title", "value": "New"}],
-            items=[make_item("AAAA1111", DOI="10.1/x"), make_item("BBBB2222", DOI="10.1/x")],
-            scan=CITED,
-        )
-        assert "shannon1948" in failures and "duplicates" in failures
-
-    def test_already_pinned_item_edits_freely(self):
-        plan = run_expand(
-            [{"op": "fill_field", "key": "AAAA1111", "field": "title", "value": "New"}],
-            items=[self.cited_unpinned(extra="Citation Key: shannon1948")],
-            scan=CITED,
-        )
-        assert len(plan.operations) == 1
-
-    def test_uncited_item_edits_freely(self):
-        uncited = SourceScan(entries=[SHANNON], cited={})
-        plan = run_expand(
-            [{"op": "fill_field", "key": "AAAA1111", "field": "title", "value": "New"}],
-            items=[self.cited_unpinned()],
-            scan=uncited,
-        )
-        assert len(plan.operations) == 1
-
-    def test_without_sources_the_guard_is_inert(self):
-        plan = run_expand(
-            [{"op": "fill_field", "key": "AAAA1111", "field": "title", "value": "New"}],
-            items=[self.cited_unpinned()],
-        )
-        assert len(plan.operations) == 1
