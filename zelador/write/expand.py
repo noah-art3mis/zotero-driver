@@ -16,6 +16,7 @@ from datetime import datetime
 from zelador.client import ZoteroClient, ZoteroError
 from zelador.taxonomy import Taxonomy
 from zelador.write.contracts import Changeset, Operation, Plan, plan_id
+from zelador.write.library_state import apply_facet
 
 ZOTERO_KEY_ALPHABET = "23456789ABCDEFGHIJKLMNPQRSTUVWXYZ"
 
@@ -122,6 +123,12 @@ class _Expander:
             risk=risk,
         )
         self.operations.append(operation)
+        # Advance the working copy the same way apply will compose the write, so
+        # a later op in this changeset sees this op's result as its old state.
+        # Creates register their own object below; here we overlay field facets.
+        if facet != "object":
+            state = self.item_state(key) if kind == "item" else self.coll_state(key)
+            apply_facet(state, facet, new)
 
     def fail(self, where: str, message: str) -> None:
         self.failures.append(f"{where}: {message}")
@@ -180,7 +187,6 @@ class _Expander:
                 new.append({"tag": target, "type": 0})
             self.emit(group, "merge_tag", "item", key, item["version"], "tags",
                       copy.deepcopy(tags), new, "high")
-            self.item_state(key)["tags"] = new
 
     def _add_tag(self, group: int, where: str, intent: dict) -> None:
         tag = intent["tag"]
@@ -196,7 +202,6 @@ class _Expander:
             version = self.items_by_key[key]["version"]
             self.emit(group, "add_tag", "item", key, version, "tags",
                       copy.deepcopy(tags), new, "low")
-            self.item_state(key)["tags"] = new
 
     def _remove_tag(self, group: int, where: str, intent: dict) -> None:
         tag = intent["tag"]
@@ -210,7 +215,6 @@ class _Expander:
             version = self.items_by_key[key]["version"]
             self.emit(group, "remove_tag", "item", key, version, "tags",
                       copy.deepcopy(tags), new, "high")
-            self.item_state(key)["tags"] = new
 
     # -- item ops ------------------------------------------------------------
 
@@ -239,7 +243,6 @@ class _Expander:
         version = self.items_by_key[key]["version"]
         risk = "low" if not old else "high"
         self.emit(group, op, "item", key, version, f"field:{field}", old, value, risk)
-        data[field] = value
 
     def _set_creators(self, group: int, where: str, intent: dict) -> None:
         key, creators = intent["key"], intent["creators"]
@@ -258,7 +261,6 @@ class _Expander:
         version = self.items_by_key[key]["version"]
         risk = "low" if not old else "high"
         self.emit(group, "set_creators", "item", key, version, "creators", old, creators, risk)
-        data["creators"] = creators
 
     def _create_item(self, group: int, where: str, intent: dict) -> None:
         item_type = intent["itemType"]
@@ -292,7 +294,6 @@ class _Expander:
             version = self.items_by_key[attachment]["version"]
             self.emit(group, "create_item", "item", attachment, version,
                       "parentItem", False, key, "low")
-            self.item_state(attachment)["parentItem"] = key
 
     def _check_create_fields(self, where, item_type, valid, intent) -> bool:
         ok = True
@@ -359,7 +360,6 @@ class _Expander:
         version = self.items_by_key[key]["version"]
         self.emit(group, "set_item_type", "item", key, version, "itemType",
                   old_type, new_type, "high")
-        data["itemType"] = new_type
         # The server validates the merged object against the new type: stored
         # fields it no longer allows must be cleared in the same write.
         for name in sorted(set(data) & old_valid - new_valid):
@@ -367,7 +367,6 @@ class _Expander:
                 continue
             self.emit(group, "set_item_type", "item", key, version, f"field:{name}",
                       data[name], "", "high")
-            data[name] = ""
 
     def _trash_item(self, group: int, where: str, intent: dict) -> None:
         key = intent["key"]
@@ -376,7 +375,6 @@ class _Expander:
             return
         version = self.items_by_key[key]["version"]
         self.emit(group, "trash_item", "item", key, version, "deleted", False, True, "high")
-        data["deleted"] = True
 
     # -- collection membership -----------------------------------------------
 
@@ -403,7 +401,6 @@ class _Expander:
             op = "add_to_collection" if add else "remove_from_collection"
             self.emit(group, op, "item", key, version, "collections",
                       list(memberships), new, "low" if add else "high")
-            data["collections"] = new
 
     # -- collection objects --------------------------------------------------
 
@@ -426,7 +423,6 @@ class _Expander:
         version = self.colls_by_key[key]["version"]
         self.emit(group, "rename_collection", "collection", key, version, "name",
                   data["name"], intent["name"], "low")
-        data["name"] = intent["name"]
 
     def _move_collection(self, group: int, where: str, intent: dict) -> None:
         key = intent["collection"]
@@ -447,7 +443,6 @@ class _Expander:
         version = self.colls_by_key[key]["version"]
         self.emit(group, "move_collection", "collection", key, version, "parentCollection",
                   data["parentCollection"], new, "high")
-        data["parentCollection"] = new
 
     def _trash_collection(self, group: int, where: str, intent: dict) -> None:
         key = intent["collection"]
@@ -457,7 +452,6 @@ class _Expander:
         version = self.colls_by_key[key]["version"]
         self.emit(group, "trash_collection", "collection", key, version, "deleted",
                   False, True, "high")
-        data["deleted"] = True
 
     def _is_descendant(self, key: str, of: str) -> bool:
         """Walk parent links in working state; `of` reachable from `key` means descendant."""

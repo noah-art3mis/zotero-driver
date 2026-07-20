@@ -17,11 +17,11 @@ from pathlib import Path
 from zelador.client import BATCH_SIZE, ZoteroClient, ZoteroError
 from zelador.write.changelog import LogEntry, SessionLog, read_log
 from zelador.write.library_state import (
+    compose,
     facet_field,
-    facet_value,
     fetch_objects,
+    matches,
     setting_value,
-    state_equal,
 )
 
 
@@ -119,51 +119,26 @@ def _undo_objects(client, log, applied: list[LogEntry], outcome: UndoOutcome, dr
 
 
 def _reverse_group(key, group: list[LogEntry], data: dict, outcome: UndoOutcome) -> dict | None:
-    """Verify each facet's current value against the last logged new state and
-    compose the restore write from the first logged old. None means conflict."""
-    by_facet: dict[str, list[LogEntry]] = {}
-    for entry in group:
-        by_facet.setdefault(entry.operation["facet"], []).append(entry)
-    if "object" in by_facet:
-        return _reverse_created(key, group, by_facet, data, outcome)
-    undo_fields: dict = {}
-    for facet, entries in by_facet.items():
-        if not state_equal(facet, facet_value(data, facet), entries[-1].operation["new"]):
-            outcome.conflicts.append(f"{key}: {facet} changed since the apply — left untouched")
-            return None
-        undo_fields[facet_field(facet)] = entries[0].operation["old"]
-    return undo_fields
+    """Verify the object still holds the composed state this plan left, then
+    build the restore: trash a create, otherwise reset each field to its first
+    logged old. None means conflict, left untouched.
 
-
-def _reverse_created(key, group, by_facet, data: dict, outcome: UndoOutcome) -> dict | None:
-    """Undoing a create (collection or item) is a trash by the precomputed key,
-    never a hard delete.
-
-    The coalesced write carried the composed state — creation values overlaid
-    by any same-plan facet ops — so verification composes the same way.
+    Composing the group's new states the same way apply did (last per field
+    wins) is what the live object must still match; a create is the same check
+    against its whole-object payload.
     """
-    expected = dict(by_facet["object"][-1].operation["new"])
-    for entry in group:
-        facet = entry.operation["facet"]
-        if facet != "object":
-            expected[facet_field(facet)] = entry.operation["new"]
-    matches = not data.get("deleted")
-    for name, value in expected.items():
-        live = data.get(name)
-        if name in ("tags", "collections", "creators"):
-            live = live or []
-        if name in ("parentCollection", "parentItem"):
-            live = data.get(name, False)
-        if live is None and value == "":
-            continue  # the server drops fields written as the empty string
-        if not state_equal(name, live, value):
-            matches = False
-    if not matches:
-        outcome.conflicts.append(
-            f"{key}: object no longer matches the state this plan left — left untouched"
-        )
+    if not matches(data, compose((e.operation["facet"], e.operation["new"]) for e in group)):
+        outcome.conflicts.append(f"{key}: state changed since the apply — left untouched")
         return None
-    return {"deleted": True}
+    if any(entry.operation["facet"] == "object" for entry in group):  # undoing a create
+        if data.get("deleted"):  # already trashed — nothing to reverse into
+            outcome.conflicts.append(f"{key}: create already trashed — left untouched")
+            return None
+        return {"deleted": True}
+    restore: dict = {}
+    for entry in group:  # in log order, so setdefault keeps each field's first old
+        restore.setdefault(facet_field(entry.operation["facet"]), entry.operation["old"])
+    return restore
 
 
 def _execute_chunk(write_fn, log, chunk, outcome: UndoOutcome) -> None:
