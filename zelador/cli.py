@@ -10,7 +10,7 @@ from typing import Annotated
 import typer
 
 from zelador import backup as backup_mod
-from zelador import cli_change, config
+from zelador import cli_change, cli_lookup, config
 from zelador import local as local_mod
 from zelador import status as status_mod
 from zelador import taxonomy as taxonomy_mod
@@ -367,6 +367,7 @@ def probe(
         print(json.dumps(make_client().raw(path), indent=2, ensure_ascii=False))
 
 
-# Change-loop commands (validate/apply/undo, debug reconcile/restore) live in
-# their own module and register onto these apps.
+# Change-loop commands (validate/apply/undo, debug reconcile/restore) and the
+# lookup command live in their own modules and register onto these apps.
 cli_change.register(app, debug_app)
+cli_lookup.register(app)

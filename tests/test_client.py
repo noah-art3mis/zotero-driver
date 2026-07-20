@@ -189,3 +189,24 @@ class TestLyingPaginationMetadata:
         client = client_for(fake)
         assert len(client.all_tags()) == 1
         assert len(fake.requests) == 1
+
+
+class TestChildrenAndFulltext:
+    def test_children_lists_attachments(self):
+        fake = FakeZotero(
+            items=[make_item("PARENT01")],
+            children={"PARENT01": [make_item("ATTACH01", item_type="attachment")]},
+        )
+        client = client_for(fake)
+        children = client.children("PARENT01")
+        assert [c["key"] for c in children] == ["ATTACH01"]
+
+    def test_fulltext_body(self):
+        fake = FakeZotero(fulltexts={"ATTACH01": {"content": "the text", "totalPages": 3}})
+        client = client_for(fake)
+        assert client.fulltext("ATTACH01") == {"content": "the text", "totalPages": 3}
+
+    def test_fulltext_absent_is_none(self):
+        fake = FakeZotero()
+        client = client_for(fake)
+        assert client.fulltext("ATTACH01") is None
