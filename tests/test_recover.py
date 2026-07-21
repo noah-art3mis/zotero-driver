@@ -76,6 +76,41 @@ class TestReconcile:
         counts = run_reconcile(SESSION, client_for(fake), tmp_path)
         assert counts == {"applied": 0, "failed": 1}
 
+    def test_landed_item_create_marked_applied(self, tmp_path):
+        # A create_item landed on the server but the response was lost before
+        # the log resolution was written — the exact crash reconcile exists for.
+        # The op's object payload carries no "name" key (that's collections).
+        created = {
+            "itemType": "journalArticle",
+            "title": "New paper",
+            "tags": [{"tag": "t:x", "type": 0}],
+            "collections": [],
+        }
+        fake = FakeZotero(
+            items=[make_item("NEWI0001", version=12, title="New paper",
+                             tags=[{"tag": "t:x", "type": 0}])]
+        )
+        crashed_session(
+            tmp_path,
+            [op_dict("op-001", "NEWI0001", "object", None, created, version=0)],
+        )
+        counts = run_reconcile(SESSION, client_for(fake), tmp_path)
+        assert counts == {"applied": 1, "failed": 0}
+        _, entries = read_log(tmp_path / f"{SESSION}.jsonl")
+        assert entries["op-001"].status == "applied"
+        assert entries["op-001"].version == 12
+
+    def test_never_created_item_marked_failed(self, tmp_path):
+        created = {"itemType": "journalArticle", "title": "New paper",
+                   "tags": [], "collections": []}
+        fake = FakeZotero()  # the create never reached the server
+        crashed_session(
+            tmp_path,
+            [op_dict("op-001", "NEWI0001", "object", None, created, version=0)],
+        )
+        counts = run_reconcile(SESSION, client_for(fake), tmp_path)
+        assert counts == {"applied": 0, "failed": 1}
+
     def test_missing_session_refused(self, tmp_path):
         with pytest.raises(RestoreError, match="no session"):
             run_reconcile("nope", client_for(FakeZotero()), tmp_path)

@@ -18,7 +18,7 @@ from zelador.client import BATCH_SIZE, ZoteroClient, ZoteroError
 from zelador.status import pending_sessions
 from zelador.write.changelog import SessionLog
 from zelador.write.contracts import Operation, Plan
-from zelador.write.library_state import facet_field, fetch_objects, state_equal
+from zelador.write.library_state import compose, fetch_objects, matches
 
 BIG_THRESHOLD = 200  # objects; beyond this apply refuses without --big
 
@@ -67,12 +67,7 @@ def compose_writes(operations: list[Operation]) -> list[tuple[str, dict, list[Op
         groups.setdefault((op.kind, op.key), []).append(op)
     writes = []
     for (kind, key), ops in groups.items():
-        write = {"key": key, "version": ops[0].version}
-        for op in ops:
-            if op.facet == "object":
-                write.update(op.new)
-            else:
-                write[facet_field(op.facet)] = op.new
+        write = {"key": key, "version": ops[0].version, **compose((op.facet, op.new) for op in ops)}
         writes.append((kind, write, ops))
     return writes
 
@@ -179,19 +174,9 @@ def _verify(client, applied_writes: list[tuple[str, dict]], outcome: ApplyOutcom
         if obj is None:
             outcome.mismatches.append(f"{write['key']}: not found on re-read")
             continue
-        data = obj["data"]
-        for name, value in write.items():
-            if name in ("key", "version"):
-                continue
-            live = data.get(name)
-            if name == "deleted":
-                live = bool(live)
-            if name == "tags":
-                live = live or []
-            if live is None and value == "":
-                continue  # the server drops fields written as the empty string
-            if not state_equal(name, live, value):
-                outcome.mismatches.append(f"{write['key']}: {name} does not match the plan")
+        expected = {k: v for k, v in write.items() if k not in ("key", "version")}
+        if not matches(obj["data"], expected):
+            outcome.mismatches.append(f"{write['key']}: does not match the plan")
     outcome.verified = not outcome.mismatches
 
 

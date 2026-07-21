@@ -8,6 +8,7 @@ from tests.conftest import USER_ID, FakeZotero, make_collection, make_item
 from zelador.client import ZoteroClient
 from zelador.config import Credentials
 from zelador.taxonomy import Family, TagEntry, Taxonomy
+from zelador.write.apply import compose_writes
 from zelador.write.contracts import Changeset
 from zelador.write.expand import ValidationError, expand
 
@@ -58,6 +59,32 @@ def failures_of(intents, **kwargs) -> str:
     with pytest.raises(ValidationError) as exc_info:
         run_expand(intents, **kwargs)
     return "\n".join(exc_info.value.failures)
+
+
+class TestForwardComposition:
+    """expand's incremental working copy must agree with apply's batch compose —
+    the same overlay rule run forward once and reassembled later."""
+
+    def test_second_op_sees_the_first_and_apply_recomposes_the_final_state(self):
+        plan = run_expand(
+            [
+                {"op": "add_tag", "tag": "topic:ai", "keys": ["AAAA1111"]},
+                {"op": "add_tag", "tag": "status:read", "keys": ["AAAA1111"]},
+            ],
+            items=[make_item("AAAA1111", version=5, tags=[])],
+        )
+        ops = [op for op in plan.operations if op.key == "AAAA1111"]
+        assert len(ops) == 2
+        # working-copy handoff: op2's starting state is op1's result
+        assert ops[1].old == ops[0].new
+        # one object -> one write, pinned to the object's version
+        assert ops[0].version == ops[1].version == 5
+        # apply composes the emitted ops back to the state expand simulated
+        (write,) = [w for _, w, _ in compose_writes(plan.operations)]
+        assert write["tags"] == [
+            {"tag": "topic:ai", "type": 0},
+            {"tag": "status:read", "type": 0},
+        ]
 
 
 class TestPlanHeader:

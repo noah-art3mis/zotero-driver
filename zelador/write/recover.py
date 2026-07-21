@@ -20,7 +20,7 @@ from pathlib import Path
 from zelador.client import BATCH_SIZE, ZoteroClient
 from zelador.write.apply import ApplyOutcome, execute_chunk
 from zelador.write.changelog import SessionLog, read_log
-from zelador.write.library_state import facet_value, fetch_objects, setting_value
+from zelador.write.library_state import compose, fetch_objects, matches, setting_value
 
 
 class RestoreError(Exception):
@@ -59,14 +59,9 @@ def _landed(client, current, op) -> tuple[bool, int | None]:
     obj = current.get((op["kind"], op["key"]))
     if obj is None:
         return False, None
-    if op["facet"] == "object":
-        data, created = obj["data"], op["new"]
-        landed = (
-            data.get("name") == created["name"]
-            and data.get("parentCollection", False) == created["parentCollection"]
-        )
-        return landed, obj["version"]
-    return facet_value(obj["data"], op["facet"]) == op["new"], obj["version"]
+    # Landed means the live object matches the state this op composes to —
+    # compose spreads a create's `object` payload and maps any other facet.
+    return matches(obj["data"], compose([(op["facet"], op["new"])])), obj["version"]
 
 
 def run_restore(
